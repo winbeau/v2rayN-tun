@@ -8,6 +8,9 @@
 
 国内流量由 sing-box 直接判定（`geoip-cn` / `geosite-cn` → direct），国外流量交给 xray 走节点。
 
+> 📚 **排查记录见 [`docs/`](docs/README.md)** —— 按主题记录了搭建过程中踩过的弯路与解决办法。
+> 遇到网络异常时，先看 [`docs/README.md`](docs/README.md) 末尾的「两个真实 bug 速查」。
+
 ---
 
 ## 为什么需要这套东西
