@@ -1,0 +1,9 @@
+# 安装时从 v2rayN 复制过来的运行时文件, 不入库
+# (sing-box 二进制 ~80MB, 规则集会随 v2rayN 更新)
+daemon/sing-box
+config/rules/
+*.srs
+*.db
+
+# macOS
+.DS_Store
