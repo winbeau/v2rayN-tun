@@ -23,9 +23,10 @@ for p in com.local.v2rayn-tun com.local.v2rayn-dnsguard; do
 done
 
 echo "--- 2. 移除用户级登录项 ---"
-if [ -n "${TARGET_HOME:-}" ]; then
+if [ -n "${TARGET_HOME:-}" ] && [ -n "${TARGET_USER:-}" ]; then
     AGENT="$TARGET_HOME/Library/LaunchAgents/v2rayN-LaunchAgent.plist"
-    sudo -u "$TARGET_USER" launchctl unload -w "$AGENT" 2>/dev/null || true
+    # root 需通过 gui/<uid> 操作用户的 GUI domain
+    launchctl bootout "gui/$(id -u "$TARGET_USER")/v2rayN-LaunchAgent" 2>/dev/null || true
     rm -f "$AGENT" && echo "   已删除 $AGENT"
 fi
 

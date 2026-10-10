@@ -89,18 +89,60 @@ chmod 644 /var/log/v2rayn-*.log 2>/dev/null
 
 # ---------- 6. 加载 ----------
 echo "--- 5. 加载守护进程 ---"
-for p in com.local.v2rayn-tun com.local.v2rayn-dnsguard; do
+SERVICES="com.local.v2rayn-tun com.local.v2rayn-dnsguard"
+
+# 先全部 bootout。注意: bootout 是异步的, 旧实例(含其子进程)需要时间退出,
+# 若立刻 bootstrap 会失败并报 "Bootstrap failed: 5: Input/output error"。
+for p in $SERVICES; do
     launchctl bootout "system/$p" 2>/dev/null || true
-    launchctl bootstrap system "$LAUNCHD/$p.plist"
 done
+
+echo -n "   等待旧实例退出"
+DRAINED=0
+for _ in $(seq 1 30); do
+    still=""
+    for p in $SERVICES; do
+        launchctl print "system/$p" >/dev/null 2>&1 && still="$still $p"
+    done
+    [ -z "$still" ] && { DRAINED=1; break; }
+    echo -n "."
+    sleep 1
+done
+echo
+[ "$DRAINED" = "1" ] || echo "   ⚠ 旧实例未在 30 秒内退净, 仍尝试加载"
+
+# bootstrap 带重试
+for p in $SERVICES; do
+    ok=0
+    for try in 1 2 3 4 5; do
+        if launchctl bootstrap system "$LAUNCHD/$p.plist" 2>/dev/null; then ok=1; break; fi
+        sleep 2
+    done
+    if [ "$ok" = "1" ] || launchctl print "system/$p" >/dev/null 2>&1; then
+        echo "   ✓ $p"
+    else
+        echo "   ❌ $p 加载失败"
+        echo "      手动排查: sudo launchctl bootstrap system $LAUNCHD/$p.plist"
+    fi
+done
+
 # 记录当前网络地址作为基线, 避免守护误判为"网络变化"
 IFACE=$(route -n get default 2>/dev/null | awk '/interface:/{print $2}')
 [ -n "$IFACE" ] && ifconfig "$IFACE" 2>/dev/null | awk '/inet /{print $2; exit}' > /var/run/v2rayn-netguard.addr
 
 # 用户级 LaunchAgent (让 v2rayN 登录自启)
-launchctl bootout "gui/$(id -u "$TARGET_USER")/v2rayN-LaunchAgent" 2>/dev/null || true
-sudo -u "$TARGET_USER" launchctl load -w "$AGENT_DIR/v2rayN-LaunchAgent.plist" 2>/dev/null || \
-    echo "   ⚠ LaunchAgent 加载失败, 可让用户手动执行: launchctl load -w $AGENT_DIR/v2rayN-LaunchAgent.plist"
+# 注意: root 无法用 sudo -u 直接操作用户的 GUI domain, 必须走 gui/<uid>
+TARGET_UID=$(id -u "$TARGET_USER")
+AGENT_SRC="$AGENT_DIR/v2rayN-LaunchAgent.plist"
+launchctl bootout "gui/$TARGET_UID/v2rayN-LaunchAgent" 2>/dev/null || true
+if launchctl bootstrap "gui/$TARGET_UID" "$AGENT_SRC" 2>/dev/null; then
+    echo "   LaunchAgent 已加载 (v2rayN 将随登录自启)"
+elif launchctl print "gui/$TARGET_UID/v2rayN-LaunchAgent" >/dev/null 2>&1; then
+    echo "   LaunchAgent 已在运行"
+else
+    echo "   ⚠ LaunchAgent 未能自动加载。请以该用户身份手动执行:"
+    echo "        launchctl load -w \"$AGENT_SRC\""
+fi
 
 # ---------- 7. 自检 ----------
 echo "--- 6. 自检 ---"
@@ -115,9 +157,17 @@ else
     echo "   ⚠ TUN 未建立 (v2rayN 未运行或端口 10808 未监听时会保持关闭, 这是设计行为)"
 fi
 
+LOADED_OK=1
 for p in com.local.v2rayn-tun com.local.v2rayn-dnsguard; do
-    printf "   %-28s %s\n" "$p" "$(launchctl print system/$p 2>/dev/null | grep -o 'state = [a-z ]*' | head -1)"
+    st=$(launchctl print "system/$p" 2>/dev/null | grep -o 'state = [a-z ]*' | head -1)
+    if [ -z "$st" ]; then
+        printf "   %-28s ❌ 未加载\n" "$p"
+        LOADED_OK=0
+    else
+        printf "   %-28s %s\n" "$p" "$st"
+    fi
 done
+[ "$LOADED_OK" = "0" ] && echo "   ⚠ 有守护未加载, 见上面提示"
 
 if [ "$UP" = "1" ]; then
     echo "   国内: HTTP $(curl -s -o /dev/null -w '%{http_code}' --max-time 15 --noproxy '*' https://www.baidu.com)"
@@ -126,7 +176,11 @@ if [ "$UP" = "1" ]; then
 fi
 
 echo
-echo "✅ 安装完成"
+if [ "$LOADED_OK" = "1" ]; then
+    echo "✅ 安装完成"
+else
+    echo "⚠️  安装完成, 但有守护未加载 (见上)"
+fi
 echo "   日志:   /var/log/v2rayn-tun.log   /var/log/v2rayn-dnsguard.log"
 echo "   开关:   touch \"$TARGET_HOME/Library/Application Support/v2rayN/tun-disabled\"    # 临时关 TUN"
 echo "           echo 1500 > \"$TARGET_HOME/Library/Application Support/v2rayN/tun-mtu\"   # 临时改 MTU"
