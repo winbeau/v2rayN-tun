@@ -86,6 +86,9 @@ stop_tun() {
         log "TUN 已停止 sing-box pid=$SB_PID"
     fi
     SB_PID=""
+    # 立刻触发网络守护, 让它在代理下线时把 DNS 还原成原样。
+    # 否则要等它下一次 30 秒轮询, 期间系统会残留一处非用户设置的 DNS。
+    /bin/launchctl kickstart -k system/com.local.v2rayn-dnsguard 2>/dev/null || true
 }
 
 cleanup() {

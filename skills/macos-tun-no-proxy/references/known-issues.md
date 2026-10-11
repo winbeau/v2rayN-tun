@@ -199,3 +199,90 @@ tr -d '\0' < binary | grep -aoE '[ -~]{4,120}' | grep -i keyword
 ```bash
 sing-box rule-set match -f binary rules/geoip-cn.srs 183.47.121.90
 ```
+
+---
+
+## 9. macOS 26.4+ 会 SIGKILL 掉 adhoc 签名的二进制 ⚠️
+
+**症状**：守护进程日志只留下这一行，没有任何错误输出：
+
+```
+TUN 已启动 sing-box pid=19032 (mtu=default)
+sing-box 立即退出, 请检查上方错误输出
+```
+
+手动执行也没有输出、没有报错：
+
+```bash
+$ sudo /usr/local/libexec/v2rayn-tun/sing-box version
+$ echo $?
+137          # 128+9 = 被 SIGKILL
+```
+
+**极易误判**：`codesign -v` 显示 `valid on disk` / `satisfies its Designated Requirement`，
+`xattr` 没有任何隔离标记，文件权限也正常。**从表象完全看不出是签名问题。**
+
+**真正的证据在崩溃报告里**：
+
+```bash
+sudo ls -t /Library/Logs/DiagnosticReports/sing-box* | head -1
+```
+
+```
+"exception"   : {"type":"EXC_CRASH","signal":"SIGKILL (Code Signature Invalid)"}
+"termination" : {"namespace":"CODESIGNING","indicator":"Taskgated Invalid Signature"}
+```
+
+**触发条件**：`cp` 覆盖一个**已存在**的 adhoc 签名二进制。macOS 26.4 起
+taskgated 会缓存该路径的签名判定，覆盖后缓存与实际文件不匹配，于是直接杀掉进程。
+
+**解法**（`install.sh` 已内置）：
+
+```bash
+# 1. 先停守护, 否则文件被占用, cp/codesign 会报 Permission denied 或 Text file busy
+launchctl bootout system/com.local.v2rayn-tun
+sleep 2; pkill -f 'v2rayn-tun/sing-box'
+
+# 2. 删掉再复制 —— 换 inode 可以让 taskgated 的旧缓存失效
+rm -f /usr/local/libexec/v2rayn-tun/sing-box
+cp "<v2rayN 的 sing-box>" /usr/local/libexec/v2rayn-tun/sing-box
+
+# 3. 重新 adhoc 签名 (关键步骤)
+codesign --force --sign - /usr/local/libexec/v2rayn-tun/sing-box
+
+# 4. 必须验证能执行, 而不是只看 codesign 的输出
+/usr/local/libexec/v2rayn-tun/sing-box version
+```
+
+**教训**：
+
+1. **`codesign -v` 通过 ≠ 能执行。** 唯一的判据是**真的跑一下**。
+2. **"进程立即退出且无输出"优先怀疑签名**，不要在看到 `codesign -v` 的
+   `valid on disk` 之后就排除它。
+3. **崩溃报告在 root 的目录**（`/Library/Logs/DiagnosticReports/`），
+   不在 `~/Library/Logs/DiagnosticReports/` —— 守护进程以 root 运行时看前者。
+4. `do shell script` **不加 `with administrator privileges` 就是普通用户**，
+   排查权限问题时漏掉这个会得出完全错误的结论（本项目就把"权限不足"
+   误判成了"系统卷已密封只读"）。
+
+---
+
+## 10. 退出 v2rayN 后 DNS 会残留
+
+**症状**：退出 v2rayN 后 TUN、路由、系统代理都干净了，但
+`networksetup -getdnsservers Wi-Fi` 还是 `223.5.5.5 119.29.29.29`。
+
+**原因**：改 DNS 是为了让查询跟随默认路由进 TUN（on-link 的 DNS 会绕过劫持）。
+TUN 不在了这个改动就失去意义，但没人把它改回去。
+
+**解法**：`dnsguard.sh` 在改 DNS 前先把原值记到
+`/usr/local/libexec/v2rayn-dnsguard/origdns`，检测到代理端口下线时还原：
+
+```
+代理端口 10808 已下线 -> 还原 DNS「Wi-Fi」为原值: Empty
+```
+
+「Empty」即 macOS 的"自动"，由 DHCP/RA 下发。另外 `run-tun.sh` 撤掉 TUN 时会
+主动 `kickstart` 网络守护，让还原立即发生，而不是等下一次 30 秒轮询。
+
+**注意**：只有在当前 DNS 仍等于我们设的值时才还原，避免覆盖用户后来手动改的设置。

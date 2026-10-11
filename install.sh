@@ -36,8 +36,37 @@ SRS_SRC="$TARGET_HOME/Library/Application Support/v2rayN/bin/srss"
 
 # ---------- 1. 复制 v2rayN 的运行时文件 ----------
 echo "--- 1. 复制 sing-box 与规则集 ---"
+
+# 先停守护再复制。两个原因:
+#   1. 文件被正在运行的 sing-box 占用时 cp 会失败
+#   2. macOS 26.4+ 起, 覆盖 adhoc 签名二进制后 taskgated 会判定
+#      "Taskgated Invalid Signature" 并直接 SIGKILL —— 必须重新签名
+for p in com.local.v2rayn-tun com.local.v2rayn-dnsguard; do
+    launchctl bootout "system/$p" 2>/dev/null || true
+done
+sleep 2
+pkill -f "$BASE_TUN/sing-box" 2>/dev/null || true
+sleep 1
+
 mkdir -p "$BASE_TUN/rules"
+
+# 删掉再复制: 换 inode 可以让 taskgated 缓存的旧签名判定失效
+rm -f "$BASE_TUN/sing-box"
 cp "$SB_SRC" "$BASE_TUN/sing-box"
+
+# 重新做 adhoc 签名。少这一步的话二进制会被内核 SIGKILL,
+# 表现为 `sing-box version` 无输出、退出码 137, 日志里只剩
+# "sing-box 立即退出", 极难从现象定位。
+if codesign --force --sign - "$BASE_TUN/sing-box" 2>/dev/null; then
+    if "$BASE_TUN/sing-box" version >/dev/null 2>&1; then
+        echo "   签名:     ✓ 已重新签名并可执行"
+    else
+        echo "   ❌ 重新签名后仍无法执行 —— macOS 的签名缓存可能需要重启才刷新"
+    fi
+else
+    echo "   ⚠ codesign 失败, 二进制可能无法执行 (见 README 的 macOS 版本注意)"
+fi
+
 for f in geoip-cn.srs geosite-cn.srs geosite-google.srs geosite-private.srs; do
     if [ -f "$SRS_SRC/$f" ]; then
         cp "$SRS_SRC/$f" "$BASE_TUN/rules/$f"

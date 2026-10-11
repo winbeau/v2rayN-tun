@@ -241,6 +241,9 @@ curl -vsk -o /dev/null --interface en0 --max-time 12 \
 4. 国内 HTTP 200 且国外 HTTP 204。
 5. `launchctl print system/<label>` 的 `state = running`。
 6. **切换一次网络后，守护日志出现「网络地址变化 → 重启 TUN」，且 15 秒内恢复。**
+7. **退出 v2rayN 后系统无残留** —— TUN 接口/路由消失、系统代理关闭、
+   **DNS 还原为「自动」**（不是留着我们设的公网 DNS）、10808 端口释放。
+   验证：`networksetup -getdnsservers Wi-Fi` 应输出 *There aren't any DNS Servers set*。
 
 第 6 条最容易被跳过，但它是这套方案的核心价值所在。
 
@@ -256,6 +259,7 @@ curl -vsk -o /dev/null --interface en0 --max-time 12 \
 | 某个应用不生效 | 该应用可能绑定了特定接口或用 `--interface` 绕过；也检查 `process_path` 规则是否把它排除了 |
 | IPv6 泄漏 | TUN 必须同时持有 IPv6 地址 + `::/0` reject 规则，否则 IPv6 完全绕过代理 |
 | 改完守护不生效 | `launchctl kickstart -k system/<label>`；或确认 `bootout` 已异步完成（硬约束 3） |
+| **守护日志只有「sing-box 立即退出」、无任何报错** | **macOS 26.4+ 的签名问题** —— adhoc 二进制被 `cp` 覆盖后 taskgated 会直接 SIGKILL。`codesign -v` 仍显示 valid，别被它骗过。见 [known-issues.md](references/known-issues.md) 第 9 条 |
 
 两个 bug 的速查命令：
 
