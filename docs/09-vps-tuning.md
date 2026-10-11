@@ -49,10 +49,45 @@ sysctl -n net.ipv4.tcp_available_congestion_control
 `sysctl` 里写 `tcp_congestion_control=bbr` 会**静默失败**（保持 cubic）：
 
 ```bash
-echo "tcp_bbr" > /etc/modules-load.d/proxy-tuning.conf
+echo "tcp_bbr" >> /etc/modules-load.d/proxy-tuning.conf
 ```
 
-脚本已内置这一步。
+### 我在这里写出的 bug ⚠️
+
+脚本第一版的逻辑是：
+
+```bash
+if ! grep -qw bbr <<< "$(sysctl -n net.ipv4.tcp_available_congestion_control)"; then
+    modprobe tcp_bbr
+    echo "tcp_bbr" > /etc/modules-load.d/proxy-tuning.conf   # ← 在 if 里面
+fi
+```
+
+**持久化写在了「当前未加载」的分支里。** 一旦模块已经被加载过（比如先手工
+`modprobe` 过一次），这个分支就不再进入，**持久化文件永远不会创建** ——
+当时测不出任何异常（BBR 正在生效），直到重启才会暴露。
+
+**两台服务器都中招了**，而且是我自己后来做配置比对时才发现的：
+
+```
+tcp_bbr 模块持久化:  否      ← 两台都是
+```
+
+**教训**：把「让当前状态正确」和「让重启后状态正确」写成两件独立的事，
+不要让后者依赖前者的判断分支。检查脚本产物时，**要检查它写出的文件，而不是它是否没报错**。
+
+修正后的写法：
+
+```bash
+# 1. 确保当前已加载
+sysctl -n net.ipv4.tcp_available_congestion_control | grep -qw bbr || {
+    modprobe tcp_bbr
+    sysctl -n net.ipv4.tcp_available_congestion_control | grep -qw bbr || exit 1
+}
+# 2. 无论当前状态如何, 都确保持久化文件存在 (用 >> 追加, 幂等)
+grep -qx tcp_bbr /etc/modules-load.d/proxy-tuning.conf 2>/dev/null || \
+    echo "tcp_bbr" >> /etc/modules-load.d/proxy-tuning.conf
+```
 
 ### 实测收益
 

@@ -18,19 +18,31 @@ echo "  可用拥塞控制: $(sysctl -n net.ipv4.tcp_available_congestion_contro
 
 # BBR 在 Ubuntu 上是模块 (tcp_bbr), 默认不一定加载 —— 必须先加载并持久化,
 # 否则 sysctl 写入 tcp_congestion_control=bbr 会静默失败 (保持 cubic)。
+
+# ---- 1. 确保模块当前已加载 ----
 if ! sysctl -n net.ipv4.tcp_available_congestion_control | grep -qw bbr; then
     echo "  BBR 未加载, 尝试载入模块..."
     modprobe tcp_bbr 2>/dev/null || true
-    if sysctl -n net.ipv4.tcp_available_congestion_control | grep -qw bbr; then
-        echo "  ✓ 模块加载成功"
-        echo "tcp_bbr" > /etc/modules-load.d/proxy-tuning.conf
-        echo "  ✓ 已写入 /etc/modules-load.d/proxy-tuning.conf (重启后自动加载)"
-    else
+    if ! sysctl -n net.ipv4.tcp_available_congestion_control | grep -qw bbr; then
         echo "  ✗ 内核确实不支持 BBR (模块缺失), 终止"; exit 1
     fi
+    echo "  ✓ 模块加载成功"
 fi
 echo "  ✓ BBR 可用"
 echo "  最终可用列表: $(sysctl -n net.ipv4.tcp_available_congestion_control)"
+
+# ---- 2. 确保重启后自动加载 ----
+# ⚠️ 这一步必须与「当前是否已加载」解耦。
+# 曾经的写法把持久化放在上面那个 if 分支内部 —— 如果模块已经加载过
+# (例如之前手工 modprobe 过), 分支不进入, 持久化文件就永远不会创建,
+# 重启后 BBR 丢失, 而 sysctl 会静默失败保持 cubic。两台服务器都踩过。
+MODCONF=/etc/modules-load.d/proxy-tuning.conf
+if ! grep -qx tcp_bbr "$MODCONF" 2>/dev/null; then
+    echo "tcp_bbr" >> "$MODCONF"
+    echo "  ✓ 已写入 $MODCONF (重启后自动加载)"
+else
+    echo "  ✓ $MODCONF 已包含 tcp_bbr"
+fi
 
 echo
 echo "=== 1. 备份现有配置 ==="
