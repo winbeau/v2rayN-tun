@@ -59,20 +59,32 @@ netstat -an -f inet | grep "183.47.121.90.80" | grep ESTABLISHED
 
 ---
 
-## 3. 绕过 TUN 做对照实验
+## 3. 绕过 TUN 做对照实验 ⭐
 
-排查"是不是 TUN 造成的"时需要一个真基线。
+排查"是不是 TUN / 本地配置造成的"时，**这一步能立刻把问题范围缩小一半**。
 
 ```bash
-# 绑定物理网卡（实测可绕过 TUN）
-curl --interface en0 --noproxy '*' https://www.google.com/generate-204
-#   超时 = 已绕过 TUN（是好基线）；成功 = 没绕过
+# 强制走物理网卡（IP_BOUND_IF，绕过路由表，完全跳过 TUN）
+curl -vsk -o /dev/null --interface en0 --max-time 12 \
+     --resolve www.intel.com:443:<节点IP> https://www.intel.com/
 
 # 绕过 sing-box 但保留代理（回环地址不进 TUN）
 curl -x socks5h://127.0.0.1:10808 https://github.com
 ```
 
 第 2 种用于**隔离 sing-box 这一层的开销**，非常好用。
+
+### 两个"假绕过"（我踩过）
+
+```bash
+# ✗ 绑定源地址 —— 不改变路由查找，去节点的路由仍指向 TUN
+python3 -c "import socket;s=socket.socket();s.bind(('192.168.5.25',0));s.connect((ip,443))"
+
+# ✗ 用域名做对照 —— 非国内域名的 DNS 依赖代理，代理一断就 connect=0.000000s
+#    看起来像"网络不通"，实际是解析就没成功。必须用 IP。
+```
+
+判读：`--interface en0` 下国内站点正常、目标站点失败 → **问题不在本地配置**。
 
 ---
 
@@ -182,3 +194,65 @@ launchctl kickstart -k system/<label>   # 重启（改配置后用）
 ```
 
 **周期性任务的 `state = not running` 是正常的**（两次运行之间就是空闲的），要看 `runs` 和 `last exit code` 才能判断它是否在正常工作。
+
+---
+
+## 10. 节点故障定位
+
+排查思路与完整案例见 [08](08-node-failure-triage.md)，这里是命令速查。
+
+### 看连接状态（比延迟数字可靠）
+
+```bash
+netstat -an -f inet | grep <节点IP>
+```
+
+| 状态 | 含义 |
+|---|---|
+| `ESTABLISHED` 无积压 | 正常 |
+| `CLOSING` / `FIN_WAIT` 且 **Send-Q 有值** | 有数据发不出去 → 节点不通 |
+| 无任何连接 | 核心没在尝试，或已放弃 |
+
+### 取节点真实 SNI（Reality 节点）
+
+```bash
+python3 -c "
+import json
+d=json.load(open('$HOME/Library/Application Support/v2rayN/binConfigs/config.json'))
+for ob in d['outbounds']:
+    if ob.get('tag')=='proxy':
+        r=ob.get('streamSettings',{}).get('realitySettings',{}) or {}
+        print(ob['protocol'], '| SNI:', r.get('serverName'))"
+```
+
+⚠️ 未授权客户端可能被 Reality 直接丢弃，所以这不是权威测试 —— **权威信号是 v2rayN 自身能否连通**。
+
+### 节点名 vs 实际出口
+
+```bash
+curl -s https://api.ipify.org                    # 出口 IP
+curl -s "https://ipinfo.io/<IP>/json" | grep -E 'city|country'
+```
+
+**不要相信节点名里的机房标识**（实测一个叫 `-HK` 的节点出口在洛杉矶）。
+
+### 判断多个节点是否同一台服务器
+
+对比各节点域名解析结果与出口 IP。解析必须绕过失效的代理：
+
+> 国内 DoH 的 IP 属于 `geoip-cn`，会走直连，**不受节点故障影响**，可直接用。
+> 但 AliDNS 用 RFC8484 的 `dns=` 参数（base64url 的 wire 格式），不是 `name=`。
+
+### 查核心是否拒绝节点
+
+```bash
+tail -30 ~/Library/Application\ Support/v2rayN/guiLogs/$(date +%Y-%m-%d).txt
+```
+
+出现 `cannot connect via Xray-core versions ... or higher` / `AllowInsecure is enabled`
+表示**节点未加密且不安全，被核心拒绝** —— 换网络换协议都无用，只能更换或让服务商升级节点。
+
+### 切换节点前先退出 v2rayN
+
+域名指定的节点在 TUN 运行时切换会触发 DNS 引导死锁（解析节点域名需要代理、代理需要先解析节点）。
+退出 v2rayN 后 TUN 撤掉，域名可走直连解析，之后启动即可。
