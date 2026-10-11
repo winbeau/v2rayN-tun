@@ -1,0 +1,4 @@
+interface:
+  display_name: "VPS 代理部署（REALITY + Hysteria2）"
+  short_description: "把一台 Linux VPS 刷成 REALITY + Hysteria2 节点并输出 v2rayN 链接"
+  default_prompt: "使用 $deploy-us-proxy 在这台 VPS 上部署 VLESS + XTLS-Vision + REALITY 和 Hysteria2，两条链路都实测通过后，给我可导入 v2rayN 的分享链接。"

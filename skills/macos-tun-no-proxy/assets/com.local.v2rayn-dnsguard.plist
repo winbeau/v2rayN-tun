@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.local.v2rayn-dnsguard</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/libexec/v2rayn-dnsguard/dnsguard.sh</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- 常态兜底: 每 30 秒自查一次 -->
+    <key>StartInterval</key>
+    <integer>30</integer>
+
+    <!-- 事件触发: 网络配置变化时立即自查 -->
+    <key>WatchPaths</key>
+    <array>
+        <string>/Library/Preferences/SystemConfiguration/preferences.plist</string>
+        <string>/Library/Preferences/SystemConfiguration/com.apple.wifi.plist</string>
+    </array>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <key>StandardOutPath</key>
+    <string>/var/log/v2rayn-dnsguard.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/var/log/v2rayn-dnsguard.err.log</string>
+</dict>
+</plist>

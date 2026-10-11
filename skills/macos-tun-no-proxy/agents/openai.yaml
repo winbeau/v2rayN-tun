@@ -1,0 +1,4 @@
+interface:
+  display_name: "macOS TUN 透明代理（无代理变量）"
+  short_description: "把 macOS 代理整成 TUN 透明模式，并排查切网后的疑难故障"
+  default_prompt: "使用 $macos-tun-no-proxy 把这台 macOS 上的代理整成 TUN 透明模式（关掉系统代理和代理环境变量），并确认切换网络后能自动恢复。"

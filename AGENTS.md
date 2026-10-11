@@ -1,0 +1,97 @@
+# AGENTS.md
+
+本仓库是**代理工具链**的唯一归口：Linux VPS 的服务端部署 + macOS 客户端的透明代理。
+所有代理相关的配置、脚本、记录都放在这里。
+
+## 目录导航
+
+| 目录 | 内容 |
+|---|---|
+| [`skills/`](skills/) | **技能包**（agent 入口）。开始相关任务前先读对应的 `SKILL.md` |
+| [`docs/`](docs/README.md) | 排查记录：13 份按主题组织的「弯路 + 解法」 |
+| [`scripts/`](scripts/) | 服务端调优与运维工具（可独立使用） |
+| `config/` `daemon/` `launchd/` | TUN 守护进程的实际安装源文件 |
+| `install.sh` `uninstall.sh` | TUN 守护进程的安装 / 卸载 |
+
+## 技能索引
+
+技能放在 [`skills/`](skills/)。**开始相关任务前先读对应的 `SKILL.md`。**
+
+| 技能 | 用途 | 入口 |
+|---|---|---|
+| [`deploy-us-proxy`](skills/deploy-us-proxy/SKILL.md) | 把一台 Linux VPS 刷成 **REALITY + Hysteria2** 节点，输出可导入 v2rayN 的分享链接 | [SKILL.md](skills/deploy-us-proxy/SKILL.md) |
+| [`macos-tun-no-proxy`](skills/macos-tun-no-proxy/SKILL.md) | macOS 上把代理整成 **TUN 透明模式**（无系统代理、无代理环境变量），并排查切网后的疑难故障 | [SKILL.md](skills/macos-tun-no-proxy/SKILL.md) |
+
+两个技能是配套的：前者产出节点链接，后者在本机把流量透明地送过去。
+
+### 什么时候用哪个
+
+| 用户说 | 用 |
+|---|---|
+| 搭建 / 部署 / 刷节点、要链接、节点连不上 | `deploy-us-proxy` |
+| 开 TUN、去掉代理变量、微信卡、切网后程序报错、IPv6 泄漏 | `macos-tun-no-proxy` |
+
+## 两条链路的分工
+
+部署出来的两条链路**不是冗余重复，而是应对不同失效场景**：
+
+| 链路 | 协议 | 定位 |
+|---|---|---|
+| Hysteria2 | QUIC/UDP | **首选**。延迟显著更低（实测 0.21s vs 1.2s）——不存在 TCP-in-TCP |
+| REALITY + Vision | TCP/TLS | 备用。UDP 被限制、或需要更强抗封锁伪装时 |
+
+**不要只部署其中一条。** 只部署 Hysteria2 会在 UDP 受限的网络里全断；
+只部署 REALITY 会白丢 5-6 倍的延迟优势。
+
+## 贯穿两份技能的几条原则
+
+这些是踩坑换来的，优先级高于「看起来更省事」的做法：
+
+1. **先分层定位，再动手。** 证明问题不在本地，再往外查。
+   国内能通就说明 TUN / 路由 / DNS 都健康，不要在自己的配置里空转。
+2. **间歇性故障必须在故障发生时取数。** 事后测到的「正常」会误导结案。
+3. **不要相信"没报错"。** 检查脚本产物时要检查它**写出的文件**：
+   - `xray run -test` 输出 `Configuration OK`，仍可能因为字段改名（`dest` → `target`）而完全不可用
+   - 调优脚本「执行成功」，仍可能因为持久化写在错误的分支里，重启后静默失效
+4. **字段/参数的"表面条件"不足以判断可用性，必须实测。**
+   两个都是 Akamai、都支持 TLS 1.3 的站点，一个能用作 REALITY target 一个不能。
+5. **用户的体感描述是一手数据，优先级高于推断。**
+   本项目两次「已排除」都是错的，而用户的两次直觉都指向了真因。
+6. **不要用 `sudoers` NOPASSWD 走捷径。** 它会让用户可写目录下的文件获得免提权能力。
+7. **不要自己跑需要密码的 `sudo`。** 把命令交给用户执行。
+
+## 常用命令
+
+```bash
+# 服务端：横向比对多台服务器的一致性（差异行标 ⚠）
+skills/deploy-us-proxy/scripts/vps-compare.sh <server1> <server2>
+
+# 客户端：TUN 健康检查与三层定位
+skills/macos-tun-no-proxy/scripts/diagnose.sh --node-ip <IP> --node-port 8443 --sni <SNI>
+
+# 客户端：两个免 sudo 开关
+touch "$HOME/Library/Application Support/v2rayN/tun-disabled"    # 临时关 TUN
+echo 1500 > "$HOME/Library/Application Support/v2rayN/tun-mtu"   # 临时改 MTU
+```
+
+## 扩展阅读
+
+**遇到技能里没覆盖的问题，先去 [`docs/`](docs/README.md) 翻记录。**
+技能是从那份实战记录提炼的压缩版，`docs/` 保留了三倍的上下文，
+包括每次误判的完整推理过程 —— 排查没思路时，误判的模式比结论更有用。
+
+| 文档 | 内容 |
+|---|---|
+| [04](docs/04-network-switch-bugs.md) | 切网后的两个真实 bug（最难查的部分） |
+| [09](docs/09-vps-tuning.md) | VPS 内核调优与 Cloudflare 优选 IP |
+| [10](docs/10-reality-setup.md) | REALITY 部署踩坑全过程 |
+| [11](docs/11-hysteria2-real-cert.md) | Hysteria2 证书问题与 QUIC 的性能优势 |
+| [toolbox](docs/toolbox.md) | 命令速查 |
+
+## 维护提示
+
+- **技能包内的脚本是自包含副本**，便于单独分发；`vps-compare.sh` 与
+  `add-reality-inbound.py` 在根 `scripts/` 下也有一份（供文档引用）。
+  改动时两边都要更新，可用 `diff` 校验一致性。
+- **`config/` `daemon/` `launchd/` 是 TUN 守护进程的安装源**，
+  `skills/macos-tun-no-proxy/` 下是同样内容的副本。`install.sh` 读的是根目录这份。

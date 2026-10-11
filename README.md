@@ -8,6 +8,15 @@
 
 国内流量由 sing-box 直接判定（`geoip-cn` / `geosite-cn` → direct），国外流量交给 xray 走节点。
 
+> **本仓库是代理配置的唯一归口。** 结构见 [`AGENTS.md`](AGENTS.md)：
+>
+> | 目录 | 内容 |
+> |---|---|
+> | [`skills/`](skills/) | **技能包**（agent 入口）：`deploy-us-proxy`（VPS 部署）、`macos-tun-no-proxy`（本机 TUN） |
+> | [`docs/`](docs/README.md) | 排查记录：13 份「弯路 + 解法」 |
+> | [`scripts/`](scripts/) | 服务端调优与运维工具 |
+> | `config/` `daemon/` `launchd/` `install.sh` | 本文档描述的 TUN 守护进程 |
+
 > 📚 **排查记录见 [`docs/`](docs/README.md)** —— 按主题记录了搭建过程中踩过的弯路与解决办法。
 > 遇到网络异常时，先看 [`docs/README.md`](docs/README.md) 末尾的「两个真实 bug 速查」。
 
