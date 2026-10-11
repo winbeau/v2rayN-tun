@@ -78,7 +78,7 @@ curl -x socks5h://127.0.0.1:10808 https://github.com
 
 ```bash
 # ✗ 绑定源地址 —— 不改变路由查找，去节点的路由仍指向 TUN
-python3 -c "import socket;s=socket.socket();s.bind(('192.168.5.25',0));s.connect((ip,443))"
+python3 -c "import socket;s=socket.socket();s.bind(('192.168.1.25',0));s.connect((ip,443))"
 
 # ✗ 用域名做对照 —— 非国内域名的 DNS 依赖代理，代理一断就 connect=0.000000s
 #    看起来像"网络不通"，实际是解析就没成功。必须用 IP。

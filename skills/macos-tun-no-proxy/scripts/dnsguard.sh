@@ -4,13 +4,13 @@
 #
 # ============ 问题 1: DNS 回落到 on-link 地址 ============
 #   sing-box TUN 只接管"跟随默认路由"的流量。与本机同网段(on-link)的 DNS
-#   (如路由器的 10.236.42.55 或 RA 下发的 IPv6 地址) 走链路直连、不进 TUN,
+#   (如路由器的 10.20.30.55 或 RA 下发的 IPv6 地址) 走链路直连、不进 TUN,
 #   绕过 sing-box 的 DNS 劫持, 返回被污染的结果。
 #
 # ============ 问题 2: sing-box 出站绑定了已失效的旧地址 ============
 #   sing-box 在启动时检测网络接口并确定出站绑定。网络切换(换 WiFi/热点)后,
 #   旧地址消失, 但 sing-box 仍用它发包, 日志报:
-#       write udp 10.236.42.160:...: can't assign requested address
+#       write udp 10.20.30.160:...: can't assign requested address
 #   结果是所有直连出站失败 —— 表现为微信卡住、程序报传输错误。
 #   本脚本检测到本机地址变化就重启 TUN, 让 sing-box 重新绑定。
 #

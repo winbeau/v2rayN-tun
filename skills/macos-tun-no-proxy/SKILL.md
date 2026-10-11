@@ -181,7 +181,7 @@ curl --noproxy '*' -s -o /dev/null -w '%{http_code}\n' https://www.google.com/ge
 旧地址消失后它仍用它发包：
 
 ```
-ERROR write udp 10.236.42.160:56026->119.29.29.29:53:
+ERROR write udp 10.20.30.160:56026->119.29.29.29:53:
       write: can't assign requested address
 ```
 

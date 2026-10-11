@@ -1,8 +1,8 @@
 # 09 · VPS 服务端调优与 Cloudflare 优选 IP
 
 对象：两台自建节点服务器
-- `216.167.95.77` — VLESS+Reality:443（XTLS-Vision）/ VLESS+WS:8443 / VMess:2053 / Hysteria2:443
-- `23.165.40.14` — VLESS+WS:443 / Hysteria2:443，域名 `hk.selab.top` 走 Cloudflare
+- `198.51.100.20` — VLESS+Reality:443（XTLS-Vision）/ VLESS+WS:8443 / VMess:2053 / Hysteria2:443
+- `198.51.100.10` — VLESS+WS:443 / Hysteria2:443，域名 `hk.example.net` 走 Cloudflare
 
 ---
 
@@ -32,7 +32,7 @@ BBR 基于带宽与时延估计，在 1%~5% 丢包下仍能跑满。
 
 ### 坑：BBR 是模块，默认可能没加载 ⚠️
 
-`23.165.40.14` 上 `sysctl -n net.ipv4.tcp_available_congestion_control` 只返回 `reno cubic`。
+`198.51.100.10` 上 `sysctl -n net.ipv4.tcp_available_congestion_control` 只返回 `reno cubic`。
 
 **第一反应是"内核不支持"，但这是错的** —— 模块文件明明存在：
 
@@ -122,7 +122,7 @@ sysctl --system      # 或直接重启
 sing-box → dial tcp 162.159.81.198:443: i/o timeout (30s)
 ```
 
-`hk.selab.top` 解析出 162.159.81.198 / 141.82 / 130.203 —— **这几个国内连不上**。
+`hk.example.net` 解析出 162.159.81.198 / 141.82 / 130.203 —— **这几个国内连不上**。
 Cloudflare 在国内是**间歇性可达**的，所以同一配置会时好时坏。
 
 ### 为什么不能绕过 Cloudflare 直连源站
@@ -131,7 +131,7 @@ Cloudflare 在国内是**间歇性可达**的，所以同一配置会时好时�
 
 ```
 subject = O="CloudFlare, Inc.", OU="CloudFlare Origin CA", CN="CloudFlare Origin Certificate"
-SAN: DNS:*.selab.top
+SAN: DNS:*.example.net
 ```
 
 **Origin 证书只有 Cloudflare 自己信任**，公开客户端不认。所以架构必须是
@@ -141,16 +141,16 @@ SAN: DNS:*.selab.top
 
 Cloudflare 是 anycast + 按 SNI 路由，因此**任何 Cloudflare IP + 正确 SNI 都能到达你的 zone**。
 
-⚠️ **必须用配置里的真实 SNI**。本例 SNI 是 `proxy.selab.top`（不是节点名里的 `hk.selab.top`），
+⚠️ **必须用配置里的真实 SNI**。本例 SNI 是 `proxy.example.net`（不是节点名里的 `hk.example.net`），
 用错 SNI 扫出来的结果不可信。
 
 ```bash
 # 扫描可用 IP（务必 --interface en0 绕过本机 TUN）
 for ip in 104.16.0.1 104.18.0.1 104.26.0.1 162.159.0.1 ...; do
   curl -sk -o /dev/null --interface en0 --max-time 6 \
-    --resolve proxy.selab.top:443:$ip \
+    --resolve proxy.example.net:443:$ip \
     -w "$ip  TCP %{time_connect}s / TLS %{time_appconnect}s / HTTP %{http_code}\n" \
-    https://proxy.selab.top/
+    https://proxy.example.net/
 done
 ```
 
@@ -172,8 +172,8 @@ sqlite3 ~/Library/Application\ Support/v2rayN/guiConfigs/guiNDB.db \
 ```json
 { "settings": { "address": "104.18.0.1", "port": 443 },
   "streamSettings": { "network": "ws", "security": "tls",
-    "tlsSettings": { "serverName": "proxy.selab.top" },
-    "wsSettings": { "path": "/ccd1igv2", "host": "proxy.selab.top" } } }
+    "tlsSettings": { "serverName": "proxy.example.net" },
+    "wsSettings": { "path": "/ccd1igv2", "host": "proxy.example.net" } } }
 ```
 
 **地址是 IP、serverName 是域名** —— 这是优选 IP 的标准形态。
@@ -188,10 +188,10 @@ sqlite3 ~/Library/Application\ Support/v2rayN/guiConfigs/guiNDB.db \
 | 发现 | 说明 |
 |---|---|
 | `selab-hy2` 节点不可用 | 未加密 + `AllowInsecure`，**新版 xray 拒绝加载**（日志有明确提示）。换网络换协议都无用，建议弃用或让服务商升级 |
-| 节点名与实际出口不符 | `selab-ws-HK` 出口 IP `23.165.40.14` 归属**洛杉矶**，不是香港 |
-| 多节点同源 | `hy.selab.top` 与 `hk.selab.top` 的后端都是 `23.165.40.14`；旧的一对 LA 节点共用 `216.167.95.77` |
-| `216.167.95.77` 实为可用 | 一度出现 "TCP 通 / TLS 零响应"，实测是**暂时性故障**，现已恢复（Reality 握手 TLS 1.67s、HTTP 301）。它有 Reality+XTLS-Vision，比 Cloudflare+WS 更快且不依赖 Cloudflare，适合作备用节点 |
-| 流量异常偏大 | `216.167.95.77` 五天累计 RX 217G / TX 289G。个人代理这个量偏大，但当前只有 2 条连接，未见滥用迹象 —— 若与实际使用量不符，值得排查 |
+| 节点名与实际出口不符 | `selab-ws-HK` 出口 IP `198.51.100.10` 归属**洛杉矶**，不是香港 |
+| 多节点同源 | `hy.example.net` 与 `hk.example.net` 的后端都是 `198.51.100.10`；旧的一对 LA 节点共用 `198.51.100.20` |
+| `198.51.100.20` 实为可用 | 一度出现 "TCP 通 / TLS 零响应"，实测是**暂时性故障**，现已恢复（Reality 握手 TLS 1.67s、HTTP 301）。它有 Reality+XTLS-Vision，比 Cloudflare+WS 更快且不依赖 Cloudflare，适合作备用节点 |
+| 流量异常偏大 | `198.51.100.20` 五天累计 RX 217G / TX 289G。个人代理这个量偏大，但当前只有 2 条连接，未见滥用迹象 —— 若与实际使用量不符，值得排查 |
 
 ---
 

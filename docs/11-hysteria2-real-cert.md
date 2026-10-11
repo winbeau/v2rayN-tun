@@ -17,7 +17,7 @@ Insecure configuration detected: AllowInsecure is enabled but no certificate is 
 ```
 issuer = CloudFlare Origin SSL Certificate Authority
 subject = CN = CloudFlare Origin Certificate
-SAN: DNS:*.selab.top
+SAN: DNS:*.example.net
 ```
 
 **Cloudflare Origin 证书只有 Cloudflare 自己信任。** 直连源站的客户端无法验证它，只能：
@@ -46,8 +46,8 @@ Cloudflare 的代理只处理 HTTP/HTTPS（TCP）。**Hysteria2 是 QUIC/UDP**�
 
 ```bash
 # 1. 域名必须解析到源站, 不能是 Cloudflare 橙色云
-dig +short A hy.selab.top
-#   23.165.40.14   ✓ 直连源站
+dig +short A hy.example.net
+#   198.51.100.10   ✓ 直连源站
 
 # 2. 80 端口必须空闲且从公网可达 (Let's Encrypt 的验证服务器要能访问)
 #    从一台境外机器验证最可靠 —— 我的测试机在国内, 测不出境外可达性
@@ -59,7 +59,7 @@ ssh root@<另一台境外服务器> 'curl -s -o /dev/null -w "%{time_connect}\n"
 
 ```bash
 apt-get install -y certbot
-certbot certonly --standalone -d hy.selab.top \
+certbot certonly --standalone -d hy.example.net \
   --non-interactive --agree-tos --register-unsafely-without-email \
   --preferred-challenges http
 ```
@@ -73,8 +73,8 @@ certbot certonly --standalone -d hy.selab.top \
 cat > /etc/letsencrypt/renewal-hooks/deploy/hysteria-reload.sh <<'SH'
 #!/bin/bash
 set -e
-install -o hysteria -g hysteria -m 644 /etc/letsencrypt/live/hy.selab.top/fullchain.pem /etc/hysteria/tls.crt
-install -o hysteria -g hysteria -m 600 /etc/letsencrypt/live/hy.selab.top/privkey.pem  /etc/hysteria/tls.key
+install -o hysteria -g hysteria -m 644 /etc/letsencrypt/live/hy.example.net/fullchain.pem /etc/hysteria/tls.crt
+install -o hysteria -g hysteria -m 600 /etc/letsencrypt/live/hy.example.net/privkey.pem  /etc/hysteria/tls.key
 systemctl restart hysteria-server
 SH
 chmod 755 /etc/letsencrypt/renewal-hooks/deploy/hysteria-reload.sh
@@ -111,9 +111,9 @@ sqlite3 ~/Library/Application\ Support/v2rayN/guiConfigs/guiNDB.db \
 
 ```json
 { "protocol": "hysteria",
-  "settings": { "address": "hy.selab.top", "port": 443, "version": 2 },
+  "settings": { "address": "hy.example.net", "port": 443, "version": 2 },
   "streamSettings": { "security": "tls",
-    "tlsSettings": { "serverName": "hy.selab.top" },
+    "tlsSettings": { "serverName": "hy.example.net" },
     "hysteriaSettings": { "version": 2, "auth": "..." } } }
 ```
 

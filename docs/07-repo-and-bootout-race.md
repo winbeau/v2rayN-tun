@@ -4,7 +4,7 @@
 
 ### 1. 路径参数化
 
-脚本与配置里原本写死了 `/Users/winbeau`。改为 `__USER_HOME__` 占位符，由 `install.sh` 在安装时替换：
+脚本与配置里原本写死了 `/Users/you`。改为 `__USER_HOME__` 占位符，由 `install.sh` 在安装时替换：
 
 ```bash
 install_subst() {   # $1=源 $2=目标 $3=权限

@@ -29,8 +29,8 @@ v2rayN/ServiceLib/ViewModels/OptionSettingViewModel.cs:407
 真因（`scutil --dns`）：
 
 ```
-nameserver[0] : 2408:847a:716:2130::6d    ← IPv6，与本机同网段
-nameserver[1] : 10.236.42.55              ← 网关，同网段
+nameserver[0] : 2001:db8:cafe::53    ← IPv6，与本机同网段
+nameserver[1] : 10.20.30.55              ← 网关，同网段
 ```
 
 两个 DNS 都在 **on-link 网段** → 流量走链路直连、**根本不进 TUN** → 绕过 sing-box 的 DNS 劫持。
@@ -43,7 +43,7 @@ nameserver[1] : 10.236.42.55              ← 网关，同网段
 
 ```bash
 curl -6 https://api64.ipify.org
-#  2408:847a:716:2130:f1e3:244a:8ad6:f7e7   ← 这是本机 en0 的真实地址!
+#  2001:db8:cafe::1   ← 这是本机 en0 的真实地址!
 ```
 
 TUN 当时**只有 IPv4 地址**（`172.19.0.1/30`），所以 IPv6 流量完全没有被接管。
@@ -58,7 +58,7 @@ TUN 当时**只有 IPv4 地址**（`172.19.0.1/30`），所以 IPv6 流量完全
 | 2 | TUN 增加 IPv6 地址 `fdfe:dcba:9876::1/126` + `{"ip_cidr":["::/0"],"action":"reject"}` | 让 IPv6 被捕获后**快速失败**，而不是泄漏 |
 | 3 | DNS `strategy: ipv4_only` | 从源头不返回 AAAA |
 
-第 2 条用 reject 而非代理，依据是实测**节点无 IPv6 能力**：经代理请求 IPv6 出口，返回的仍是 IPv4 `216.167.95.77`。reject 能让应用立刻回退 IPv4，避免超时等待。
+第 2 条用 reject 而非代理，依据是实测**节点无 IPv6 能力**：经代理请求 IPv6 出口，返回的仍是 IPv4 `198.51.100.20`。reject 能让应用立刻回退 IPv4，避免超时等待。
 
 ## 验证
 

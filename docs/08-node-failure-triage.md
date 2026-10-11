@@ -26,7 +26,7 @@ curl -vsk -o /dev/null --interface en0 --max-time 12 \
 ### 第 3 层要分开看 TCP 和 TLS
 
 ```
-* Connected to ... (216.167.95.77) port 443     ← TCP 成功
+* Connected to ... (198.51.100.20) port 443     ← TCP 成功
 * (304) (OUT), TLS handshake, Client hello (1):
 * Connection timed out after 12001 milliseconds ← TLS 零响应
 ```
@@ -62,7 +62,7 @@ for ob in d['outbounds']:
 ### 弯路 2：用绑定源地址代替 `--interface`
 
 ```python
-s.bind(("192.168.5.25", 0)); s.connect((node_ip, 443))   # ✗ 无效
+s.bind(("192.168.1.25", 0)); s.connect((node_ip, 443))   # ✗ 无效
 ```
 
 绑定源地址**不改变路由查找** —— 去节点的路由仍指向 TUN，所以这个"绕过"是假的，测出来的 0.00s 是 TUN 本地应答。
@@ -96,7 +96,7 @@ netstat -an -f inet | grep <节点IP>
 
 ```
 节点名:  selab-ws-HK        ← 名字写着 HK
-出口 IP: 23.165.40.14
+出口 IP: 198.51.100.10
 ipinfo:  city = Los Angeles, country = US   ← 实际在洛杉矶
 ```
 
@@ -112,10 +112,10 @@ curl -s "https://ipinfo.io/<出口IP>/json" | grep -E 'city|country|org'
 ### 2. 多个节点其实是同一台服务器
 
 ```
-LA-Reality    216.167.95.77
-LA-Hysteria2  hy2.icthub.top   → 216.167.95.77    同一台
-selab-hy2     hy.selab.top    → 23.165.40.14
-selab-ws-HK   hk.selab.top    → 出口 23.165.40.14  也是同一台
+LA-Reality    198.51.100.20
+LA-Hysteria2  hy2.example.org   → 198.51.100.20    同一台
+selab-hy2     hy.example.net    → 198.51.100.10
+selab-ws-HK   hk.example.net    → 出口 198.51.100.10  也是同一台
 ```
 
 → **换节点等于没换。** 订阅里至少要有一个不同机房、不同 IP 的节点，否则单点故障就是全断。

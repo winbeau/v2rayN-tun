@@ -1,13 +1,13 @@
 # 10 · 在自建服务器上启用 Reality + XTLS-Vision
 
-目标：给 `23.165.40.14` 增加一条**不依赖 Cloudflare** 的高速链路，并接入本机 v2rayN。
+目标：给 `198.51.100.10` 增加一条**不依赖 Cloudflare** 的高速链路，并接入本机 v2rayN。
 
 ---
 
 ## 最终架构
 
 ```
-23.165.40.14
+198.51.100.10
 ├── TCP 8443   VLESS + Reality + XTLS-Vision   ← 新增，直连，主用
 ├── TCP 443    VLESS + WS + TLS                ← 保留，经 Cloudflare 回源，备用
 └── UDP 443    Hysteria2                       ← 保留
@@ -152,7 +152,7 @@ sqlite3 ~/Library/Application\ Support/v2rayN/guiConfigs/guiNDB.db \
 
 ```json
 { "protocol": "vless",
-  "settings": { "address": "23.165.40.14", "port": 8443,
+  "settings": { "address": "198.51.100.10", "port": 8443,
                 "id": "...", "encryption": "none", "flow": "xtls-rprx-vision" },
   "streamSettings": { "network": "raw", "security": "reality",
     "realitySettings": { "serverName": "www.intel.com", "fingerprint": "chrome",

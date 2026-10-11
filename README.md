@@ -142,7 +142,7 @@ TUN 同时持有 IPv4 与 IPv6 地址以捕获 IPv6，再用 `{"ip_cidr": ["::/0
 
 **问题 A：DNS 回落到 on-link 地址**
 
-与主机同网段的 DNS（如路由器 `10.236.42.55`、RA 下发的 IPv6 DNS）走链路直连、**不进 TUN**，
+与主机同网段的 DNS（如路由器 `10.20.30.55`、RA 下发的 IPv6 DNS）走链路直连、**不进 TUN**，
 因此绕过 sing-box 的 DNS 劫持，返回被污染的结果（实测 `google.com` 解析到 Twitter 的 IP 段）。
 
 判定规则是**因果关系而非白名单比对**：只要主解析器在用 on-link / 私有地址就改回公网 DNS，
@@ -154,7 +154,7 @@ sing-box 在**启动时**检测网络并确定出站绑定。网络切换（换 
 但它仍用旧地址发包：
 
 ```
-ERROR write udp 10.236.42.160:...->119.29.29.29:53: can't assign requested address
+ERROR write udp 10.20.30.160:...->119.29.29.29:53: can't assign requested address
 ```
 
 **结果是所有直连出站失败** —— 表现为微信卡住、程序报传输错误、国内网站打不开。

@@ -42,8 +42,8 @@ private bool AllowEnableTun() {
 
 ```bash
 scutil --dns | grep -E 'nameserver|if_index'
-#   nameserver[0] : 2408:847a:716:2130::6d    ← 与本机同网段
-#   nameserver[1] : 10.236.42.55              ← 网关, 同网段
+#   nameserver[0] : 2001:db8:cafe::53    ← 与本机同网段
+#   nameserver[1] : 10.20.30.55              ← 网关, 同网段
 ```
 
 **两个 DNS 都是 on-link** → 流量走链路直连、**根本不进 TUN** → 绕过 DNS 劫持。
@@ -85,11 +85,11 @@ curl -6 https://api64.ipify.org    # 返回本机 en0 的真实 IPv6
 旧地址消失后它仍用它发包：
 
 ```
-ERROR write udp 10.236.42.160:56026->119.29.29.29:53:
+ERROR write udp 10.20.30.160:56026->119.29.29.29:53:
       write: can't assign requested address
 ```
 
-当时 en0 已经是 `192.168.5.25`，而 sing-box 仍在用 `10.236.42.160`。
+当时 en0 已经是 `192.168.1.25`，而 sing-box 仍在用 `10.20.30.160`。
 
 **走过的弯路**：
 

@@ -12,7 +12,7 @@
 #   2. 80 端口空闲且从公网可达 (Let's Encrypt 的验证服务器需要访问)
 #
 # 用法: ./hysteria-real-cert.sh <域名> [证书路径...]
-#   例: ./hysteria-real-cert.sh hy.selab.top
+#   例: ./hysteria-real-cert.sh hy.example.net
 #
 set -e
 
