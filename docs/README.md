@@ -20,6 +20,7 @@
 | [07](07-repo-and-bootout-race.md) | 建仓与 bootout 竞态 | `launchctl` 的 bootout/bootstrap 不是同步的 |
 | [08](08-node-failure-triage.md) | **节点故障分层定位** ⭐ | 先证明问题不在本地，再往外查 |
 | [09](09-vps-tuning.md) | **VPS 调优与 Cloudflare 优选 IP** ⭐ | CDN 前置的节点，故障点可能在 CDN |
+| [10](10-reality-setup.md) | **启用 Reality + XTLS-Vision** ⭐ | 旧配置的 `dest` 已被静默改名为 `target` |
 | [toolbox](toolbox.md) | **排查命令速查** ⭐ | 本项目真正用上的技巧 |
 
 ---
@@ -38,6 +39,7 @@
 ⑨ 建仓 + git ────────────── 路径参数化；修掉 install.sh 的加载竞态
 ⑩ 节点集体失效 ──────────── 分层定位；节点名不副实；换节点踩 DNS 死锁
 ⑪ VPS 调优 ──────────────── BBR 模块未加载；Cloudflare 优选 IP 修复
+⑫ Reality 接入 ──────────── dest→target 静默改名；target 必须实测
 ```
 
 ---
