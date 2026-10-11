@@ -131,17 +131,12 @@ selab-ws-HK   hk.selab.top    → 出口 23.165.40.14  也是同一台
 
 ## 节点被核心拒绝（不是网络问题）
 
-v2rayN 日志里出现这类信息时，**换任何网络、任何协议都连不上**：
-
-```
-selab-hy2: The current node uses an unencrypted connection...
-For security reasons, nodes of this type cannot connect via Xray-core versions 26.2.6 or higher.
-Insecure configuration detected: AllowInsecure is enabled but no certificate is provided.
-```
-
-节点未加密且开启 `AllowInsecure`，新版 xray 出于安全考虑拒绝加载。
+v2rayN 日志里出现 `cannot connect via Xray-core versions ... or higher` /
+`AllowInsecure is enabled but no certificate is provided` 这类信息时，
+**换任何网络、任何协议都连不上** —— 节点未加密且开启 `AllowInsecure`，新版 xray 拒绝加载。
 
 → 处置：让服务商升级节点配置，或直接弃用该节点。
+完整案例与修复方法见 [11 · 修复 Hysteria2](11-hysteria2-real-cert.md)。
 
 ---
 

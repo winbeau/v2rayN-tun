@@ -21,6 +21,7 @@
 | [08](08-node-failure-triage.md) | **节点故障分层定位** ⭐ | 先证明问题不在本地，再往外查 |
 | [09](09-vps-tuning.md) | **VPS 调优与 Cloudflare 优选 IP** ⭐ | CDN 前置的节点，故障点可能在 CDN |
 | [10](10-reality-setup.md) | **启用 Reality + XTLS-Vision** ⭐ | 旧配置的 `dest` 已被静默改名为 `target` |
+| [11](11-hysteria2-real-cert.md) | **修复 Hysteria2（换真证书）** ⭐ | QUIC 无法躲在 CDN 后面；TCP-in-TCP 是隐形税 |
 | [toolbox](toolbox.md) | **排查命令速查** ⭐ | 本项目真正用上的技巧 |
 
 ---
@@ -40,6 +41,8 @@
 ⑩ 节点集体失效 ──────────── 分层定位；节点名不副实；换节点踩 DNS 死锁
 ⑪ VPS 调优 ──────────────── BBR 模块未加载；Cloudflare 优选 IP 修复
 ⑫ Reality 接入 ──────────── dest→target 静默改名；target 必须实测
+⑬ Hysteria2 修复 ────────── Cloudflare 源站证书不可信 → Let's Encrypt；
+                            换 QUIC 承载后延迟快 5-6 倍（TCP-in-TCP 的代价）
 ```
 
 ---
