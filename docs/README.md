@@ -19,6 +19,7 @@
 | [06](06-github-slow.md) | GitHub 慢 | 延迟与吞吐要分开查；含一次把服务搞断的失误 |
 | [07](07-repo-and-bootout-race.md) | 建仓与 bootout 竞态 | `launchctl` 的 bootout/bootstrap 不是同步的 |
 | [08](08-node-failure-triage.md) | **节点故障分层定位** ⭐ | 先证明问题不在本地，再往外查 |
+| [09](09-vps-tuning.md) | **VPS 调优与 Cloudflare 优选 IP** ⭐ | CDN 前置的节点，故障点可能在 CDN |
 | [toolbox](toolbox.md) | **排查命令速查** ⭐ | 本项目真正用上的技巧 |
 
 ---
@@ -36,6 +37,7 @@
 ⑧ GitHub 慢 ─────────────── 确认是物理距离，配置已最优
 ⑨ 建仓 + git ────────────── 路径参数化；修掉 install.sh 的加载竞态
 ⑩ 节点集体失效 ──────────── 分层定位；节点名不副实；换节点踩 DNS 死锁
+⑪ VPS 调优 ──────────────── BBR 模块未加载；Cloudflare 优选 IP 修复
 ```
 
 ---
