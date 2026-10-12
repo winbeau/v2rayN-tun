@@ -8,7 +8,7 @@
 | 目录 | 内容 |
 |---|---|
 | [`skills/`](skills/) | **技能包**（agent 入口）。开始相关任务前先读对应的 `SKILL.md` |
-| [`docs/`](docs/README.md) | 排查记录：13 份按主题组织的「弯路 + 解法」 |
+| [`docs/`](docs/README.md) | 排查记录：12 份按主题组织的「弯路 + 解法」 |
 | [`scripts/`](scripts/) | 服务端调优、运维工具、签名证书准备（可独立使用） |
 | `config/` `daemon/` `launchd/` | TUN 守护进程与 Cmd+Q 拦截器的安装源文件 |
 | `install.sh` `uninstall.sh` | TUN 守护进程的安装 / 卸载 |
