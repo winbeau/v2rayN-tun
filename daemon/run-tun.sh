@@ -29,10 +29,10 @@ RUN_CONF="$BASE/config.run.json"
 PROXY_PORT=10808
 LOG=/var/log/v2rayn-tun.log
 POLL=5
-# 代理掉线后等多久才撤 TUN (秒)。配合 quit-guard.sh: 误按 Cmd+Q 时它约 2 秒
-# 就能把 v2rayN 拉回来, 只要这里还没撤, TUN 就一直没断过。
+# 代理掉线后等多久才撤 TUN (秒)。纯粹是防抖: 给 v2rayN 崩溃后自动重启留个窗口。
+# 误按 Cmd+Q 已由 quit-guard 在按键层拦下, v2rayN 根本不会退出, 不依赖这里。
 # 不能设太长: 这段窗口内流量进 TUN 却没有出口, 等于断网。
-GRACE=20
+GRACE=8
 
 # __USER_HOME__ 由 install.sh 在安装时替换为实际用户主目录
 FLAG="__USER_HOME__/Library/Application Support/v2rayN/tun-disabled"

@@ -1,101 +1,149 @@
-# 12 · 误退出保护（quit-guard）
+# 12 · 误按 Cmd+Q 保护（quit-guard）
 
 ## 问题
 
-v2rayN 本身**没有"退出确认"设置**（`guiNConfig.json` 的全部键、`UiItem`/`GuiItem`
-等嵌套项都查过）。而 macOS 的 `Cmd+Q` 是**系统级退出**，第三方无法拦截。
+v2rayN 没有"退出确认"设置（`guiNConfig.json` 全部键、`UiItem`/`GuiItem` 等嵌套项
+都查过）。macOS 的 `Cmd+Q` 是系统级退出，应用自己不做确认就没有确认。
 
-结果就是：正在下载或跟 ChatGPT 对话时手一抖按到 `Cmd+Q`，TUN 被撤、代理断掉，
-所有连接一起失败。
+结果：正在下载或跟 ChatGPT 对话时手一抖，TUN 被撤、连接全断。
 
-## 为什么不能"拒绝退出"
+## 走过的弯路
 
-逻辑上做不到拦截 —— 我们是外部进程，只能**事后补救**。所以目标不是"不让它退出"，
-而是**让退出的代价降到零**：
+**第一版做成了"检测到退出后把 v2rayN 拉回来"。** 这是错的设计，两个硬伤：
+
+1. **v2rayN 真的关过一次** —— 进程重建、窗口重建、连接重建。靠 `run-tun.sh`
+   的宽限期只是让 TUN 没来得及撤，应用本身的中断是实打实的。
+2. **和 `GRACE` 强耦合** —— 宽限期必须大于弹窗超时，`GRACE` 被迫拉到 20 秒。
+   而这段窗口里流量进 TUN 却没有出口，等于断网；真要退出时得等 20 秒才恢复直连。
+
+**正确做法是在按键阶段就拦下来**，让 v2rayN 根本收不到 `Cmd+Q`。
+它不退出，就不存在"重建"这回事。
+
+## 现在的实现
+
+用 `CGEventTap` 在系统事件流里拦截按键：
 
 ```
-你按 Cmd+Q
+你按 Cmd+Q（v2rayN 在前台）
    ↓
-quit-guard 检测到 v2rayN 消失（轮询 1 秒）
-   ↓
-弹确认窗口：需要【按住按钮 8 秒】才放行
-   ├─ 长按满 8 秒  → 确认退出
-   ├─ 松手 / 点取消 → 取消
-   └─ 12 秒无操作  → 超时取消
-   ↓
-取消 → 立刻把 v2rayN 拉回来
+CGEventTap 回调
+   ├─ 不是 Cmd+Q            → 放行
+   ├─ 前台不是 v2rayN        → 放行    ← 其他应用完全不受影响
+   └─ 是 → 【立刻吞掉事件】并异步处理
+             ├─ 有 allow-quit 开关 / 无受保护进程 → 原样重发, 正常退出
+             └─ 有受保护进程 → 弹窗
+                  ├─ 长按 8 秒   → 主动 terminate v2rayN
+                  └─ 取消 / 12 秒超时 → 什么也没发生, v2rayN 一直开着
 ```
 
-**关键在时序**：`run-tun.sh` 有一个 `GRACE=20` 秒的宽限期 —— 代理掉线后不立刻
-撤 TUN，先等 20 秒。而弹窗最长只持续 12 秒，所以：
-
-> TUN 从来来不及被撤掉，v2rayN 就已经回来了。**网络中断 = 0 秒。**
-
-实测（`sing-box` 的 pid 全程没变，说明 TUN 一次都没重建）：
+**关键差异：v2rayN 的进程从始至终没有变化。** 实测：
 
 ```
- 2 秒: TUN=up  v2rayN=no   sing-box=39654   -         ← 检测到退出
- 4 秒: TUN=up  v2rayN=no   sing-box=39654   弹窗中     ← 弹窗出现
- …
-18 秒: TUN=up  v2rayN=no   sing-box=39654   弹窗中
-20 秒: TUN=up  v2rayN=yes  sing-box=39654   -         ← 自动恢复
+测试前 v2rayN pid: 39993
+  ...按下 Cmd+Q...
+测试后 v2rayN pid: 39993     ← 完全没变
+TUN: 全程保持
 ```
 
-## 组件
+日志：
 
-| 文件 | 作用 |
+```
+05:11:28  event tap 已启用, 只在 v2rayN 为前台应用时拦截 Cmd+Q
+05:11:42  拦截 Cmd+Q: 受保护进程 [Terminal]
+05:12:29  用户取消 —— v2rayN 全程未退出
+```
+
+## 三个必须写对的点
+
+### 1. 事件回调绝不能阻塞
+
+`CGEventTap` 的回调如果卡住，**冻住的是整个系统的键盘输入**，不只是 v2rayN。
+
+所以回调里只做极快的判断然后立刻返回，弹窗和后续处理全部丢到后台队列。
+需要"放行"时用重发事件的方式补回去：
+
+```swift
+original.setIntegerValueField(.eventSourceUserData, value: EVENT_MARKER)
+original.postToPid(v2raynPID)
+```
+
+**重发必须带标记**，否则会被自己的 tap 再拦一次 —— 死循环。
+
+（第一版就踩了这个坑：在回调里用 `sem.wait()` 等弹窗结果，那会把整机键盘冻住
+最长 12 秒。）
+
+### 2. 只对 v2rayN 生效
+
+```swift
+guard keycode == KEYCODE_Q, event.flags.contains(.maskCommand) else { 放行 }
+guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "2dust.v2rayN" else { 放行 }
+```
+
+对照实测（TextEdit 在前台按 Cmd+Q）：
+
+```
+TextEdit pid: 41178 -> 已退出      ← 正常退出
+拦截次数:     2 -> 2               ← 拦截器完全没插手
+```
+
+### 3. 受保护应用用 Bundle ID，不用进程名
+
+```swift
+let PROTECTED_BUNDLE_IDS: Set<String> = [
+    "com.apple.Terminal", "com.googlecode.iterm2", "dev.warp.Warp-Stable", …
+    "com.apple.Safari", "com.google.Chrome", "org.mozilla.firefox", …
+    "com.openai.chat", "com.anthropic.claudefordesktop", …
+]
+```
+
+用 `NSWorkspace.runningApplications` 按 bundle id 匹配，比 `pgrep` 精确，
+不会误命中 `Google Chrome Helper` 之类的子进程。
+
+**浏览器装的 App（PWA）不需要单独处理** —— 它仍然是浏览器主进程在跑，
+列了浏览器就覆盖了。
+
+## 硬前提：辅助功能权限
+
+**macOS 不允许没有辅助功能（Accessibility）权限的程序拦截键盘事件。** 没有它
+`CGEventTap` 直接创建失败。
+
+首次启动时程序会调 `AXIsProcessTrustedWithOptions(prompt: true)` 弹出系统提示并
+把注册项加进列表。**需要在「系统设置 → 隐私与安全性 → 辅助功能」里手动勾选**：
+
+```
+/usr/local/libexec/v2rayN-tun/quit-guard
+```
+
+勾选后重启服务：
+
+```bash
+launchctl kickstart -k gui/$(id -u)/com.local.v2rayn-quitguard
+```
+
+实测观察到一个细节：第一次启动报"未授权"，10 秒后 launchd 的 `KeepAlive` 把它
+重启，这次就显示"已授权"并且 tap 创建成功 —— 系统提示本身会触发注册。
+如果一直起不来，去设置里检查那一项。
+
+## 为什么是 LaunchAgent
+
+- `CGEventTap` 作用于**当前登录会话** → 必须在 GUI 会话里
+- 要弹窗、要读用户目录下的开关文件
+- 辅助功能权限是按「用户 + 程序」授予的，系统级守护进程拿不到
+
+## 放行条件（两个）
+
+| 条件 | 说明 |
 |---|---|
-| `daemon/quit-guard.sh` | 看门狗本体，常驻运行 |
-| `daemon/quit-guard-dialog.swift` | 确认窗口（长按进度条 + 倒计时），`install.sh` 用 `swiftc` 现场编译 |
-| `launchd/com.local.v2rayn-quitguard.plist` | 用户级 LaunchAgent（`KeepAlive`） |
-| `run-tun.sh` 的 `GRACE` | TUN 撤除宽限期，配合看门狗做到零中断 |
-
-## 为什么是 LaunchAgent 而不是 LaunchDaemon
-
-- 需要**弹窗** → 必须跑在用户的 GUI 会话里（`LimitLoadToSessionType: Aqua`）
-- 需要 `open -a v2rayN` → 必须以用户身份启动
-- 需要检测用户进程 → 同会话才准
-
-## 状态机（这是最容易写错的地方）
-
-```
-ARMED=1   正在保护。v2rayN 消失就按上面的流程处理。
-ARMED=0   刚放行过一次退出。此时【绝不】再拉回 v2rayN。
-```
-
-`ARMED=0` 这一条是必需的 —— 少了它就变成"**永远退不出去**"：你确认退出 →
-看门狗又把它拉起来 → 你再退出 → 再拉起来，死循环。状态存在
-`/tmp/v2rayn-quitguard.state`，所以 launchd 重启脚本也不会误判。
-
-等 v2rayN **自己**重新运行（你手动打开），才回到 `ARMED=1`。
-
-## 受保护进程
-
-用 `pgrep -x` 精确匹配**主进程名**，不会误命中 `Google Chrome Helper` 之类的子进程：
-
-- **终端**：Terminal / iTerm2 / Warp / kitty / WezTerm / Alacritty / Hyper / Tabby / ghostty
-- **浏览器**：Safari / Google Chrome / Firefox / Edge / Arc / Brave / Vivaldi / Opera
-- **AI 应用**：ChatGPT / Claude / Perplexity / Cursor / LM Studio
-- **浏览器装的 App（PWA）**：以 `--app=` 或 `--app-id=` 启动的独立窗口。
-  这类窗口没有独立进程名，只能从命令行参数识别。
-
-要增删名单，改 `quit-guard.sh` 顶部的三个数组。
-
-## 三种退出方式
-
-| 方式 | 结果 |
-|---|---|
-| 直接 `Cmd+Q` | 弹窗，长按 8 秒才放行；否则自动恢复代理 |
-| 弹窗里长按 8 秒 | 确认退出 |
-| `touch "…/v2rayN/allow-quit"` | 直接放行，不再拦截（永久逃生舱） |
-
-**`TUN 没开时不拦截** —— 代理本来就没生效，退出不影响任何东西。这条避免了
-"只想关掉 v2rayN 却被拦"的无谓打扰。
+| `touch "…/v2rayN/allow-quit"` | 永久逃生舱，存在就直接放行 |
+| 没有任何受保护进程 | 没程序在用网，退出不影响什么，没必要拦 |
 
 ## 已知取舍
 
-1. **真的要退出时会多等 `GRACE` 秒**（20 秒）网络才恢复直连。这段窗口里流量
-   进 TUN 却没有出口，等于断网。`GRACE` 不能设太大。
-2. **弹窗会抢焦点**。这是刻意的 —— 长按确认需要你的注意力，才叫"防手误"。
-3. **`swiftc` 不可用时自动回退** 到 `osascript` 静态对话框（功能等价，只是没有
-   长按进度条）。装 Xcode Command Line Tools 即可：`xcode-select --install`。
+1. **必须是原生代码。** `osascript` 做不到拦截键盘 —— 它只能显示对话框，
+   而那时 v2rayN 已经退出了。所以 `install.sh` 用 `swiftc` 现场编译，
+   没有 Xcode Command Line Tools 就装不了（`xcode-select --install`）。
+2. **弹窗会抢焦点。** 刻意的 —— 长按确认需要你的注意力，才叫"防手误"。
+3. **只拦 Cmd+Q。** 菜单里的 Exit、Dock 右键退出、`killall` 都不经过按键事件，
+   拦不到。这符合"防手误"的定位：手误基本都是快捷键，走菜单是明确意图。
+4. `run-tun.sh` 的 `GRACE` 已调回 8 秒 —— 它现在纯粹是防抖（给 v2rayN 崩溃后
+   自动重启留个窗口），不再需要兜住"关掉再拉起来"。

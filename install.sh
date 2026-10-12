@@ -90,36 +90,34 @@ install_subst "$REPO/daemon/dnsguard.sh" "$BASE_GUARD/dnsguard.sh" 755
 install_subst "$REPO/config/sing-box.json" "$BASE_TUN/config.json" 644
 echo "   run-tun.sh / dnsguard.sh / config.json"
 
-# ---------- 2b. 退出看门狗的确认对话框 ----------
-# 用 swiftc 现场编译一个原生对话框(带长按进度条和倒计时)。
-# 编译失败不致命 —— quit-guard.sh 会自动退回 osascript 静态对话框。
-echo "--- 2b. 编译退出确认对话框 ---"
-DIALOG="$BASE_TUN/quit-guard-dialog"
+# ---------- 2b. 退出保护 (Cmd+Q 拦截器) ----------
+# 这个工具用 CGEventTap 在按键阶段就把 Cmd+Q 吞掉, v2rayN 根本收不到,
+# 所以它是【不会退出】而不是"退出后被拉回来"。
+#
+# 硬前提: 辅助功能(Accessibility)权限。macOS 不允许没有该权限的程序拦截键盘。
+# 首次运行会弹系统提示, 需要到「系统设置 → 隐私与安全性 → 辅助功能」里勾选。
+echo "--- 2b. 编译 Cmd+Q 拦截器 ---"
+QG_BIN="$BASE_TUN/quit-guard"
 if command -v swiftc >/dev/null 2>&1; then
-    if swiftc -O -o "$DIALOG" "$REPO/daemon/quit-guard-dialog.swift" 2>/tmp/dialog-build.log; then
-        chown root:wheel "$DIALOG"; chmod 755 "$DIALOG"
-        echo "   ✓ 已编译 (长按进度条 + 倒计时)"
+    if swiftc -O -o "$QG_BIN" "$REPO/daemon/quit-guard.swift" 2>/tmp/quitguard-build.log; then
+        chown root:wheel "$QG_BIN"; chmod 755 "$QG_BIN"
+        echo "   ✓ 已编译 (按键层拦截, 不影响其他应用的 Cmd+Q)"
     else
-        echo "   ⚠ 编译失败, 将回退到 osascript 对话框:"
-        head -3 /tmp/dialog-build.log | sed 's/^/      /'
+        echo "   ❌ 编译失败:"
+        head -5 /tmp/quitguard-build.log | sed 's/^/      /'
     fi
 else
-    echo "   ⚠ 未安装 Xcode Command Line Tools (swiftc 不可用)"
-    echo "     将使用 osascript 对话框(功能等价, 但没有长按进度条)"
-    echo "     想装: xcode-select --install"
+    echo "   ❌ 缺少 swiftc (Xcode Command Line Tools)"
+    echo "      安装: xcode-select --install"
+    echo "      没有它就无法做 Cmd+Q 拦截 —— 这个功能必须编译原生代码。"
 fi
-# 看门狗本体放在用户目录下 —— 它必须以用户身份运行才能弹窗和 open -a
-QG_DIR="$TARGET_HOME/Library/Application Support/v2rayN-tun"
-mkdir -p "$QG_DIR"
-install_subst "$REPO/daemon/quit-guard.sh" "$QG_DIR/quit-guard.sh" 755
-chown -R "$TARGET_USER" "$QG_DIR"
-echo "   quit-guard.sh -> $QG_DIR"
 
 # ---------- 3. 权限收紧 ----------
 echo "--- 3. 权限 (全部 root 所有, 用户不可写) ---"
 chown -R root:wheel "$BASE_TUN" "$BASE_GUARD"
 chmod 755 "$BASE_TUN" "$BASE_GUARD" "$BASE_TUN/rules"
 chmod 755 "$BASE_TUN/sing-box" "$BASE_TUN/run-tun.sh" "$BASE_GUARD/dnsguard.sh"
+[ -f "$BASE_TUN/quit-guard" ] && chmod 755 "$BASE_TUN/quit-guard"
 chmod 644 "$BASE_TUN/config.json" "$BASE_TUN"/rules/*.srs 2>/dev/null
 xattr -dr com.apple.quarantine "$BASE_TUN" "$BASE_GUARD" 2>/dev/null || true
 
@@ -210,15 +208,28 @@ fi
 QG_AGENT="$AGENT_DIR/com.local.v2rayn-quitguard.plist"
 launchctl bootout "gui/$TARGET_UID/com.local.v2rayn-quitguard" 2>/dev/null || true
 sleep 1
-# 状态文件清掉, 避免上一轮的 ARMED=0 让新守护一开始就不设防
-rm -f /tmp/v2rayn-quitguard.state
-if launchctl bootstrap "gui/$TARGET_UID" "$QG_AGENT" 2>/dev/null; then
-    echo "   ✓ 退出看门狗已加载 (误按 Cmd+Q 会弹窗要求长按确认)"
-elif launchctl print "gui/$TARGET_UID/com.local.v2rayn-quitguard" >/dev/null 2>&1; then
-    echo "   ✓ 退出看门狗已在运行"
+if launchctl bootstrap "gui/$TARGET_UID" "$QG_AGENT" 2>/dev/null \
+   || launchctl print "gui/$TARGET_UID/com.local.v2rayn-quitguard" >/dev/null 2>&1; then
+    sleep 2
+    if launchctl print "gui/$TARGET_UID/com.local.v2rayn-quitguard" 2>/dev/null | grep -q "state = running"; then
+        echo "   ✓ Cmd+Q 拦截器已运行"
+    else
+        echo "   ⚠ Cmd+Q 拦截器未能运行 —— 多半是缺辅助功能权限, 见下方说明"
+    fi
 else
-    echo "   ⚠ 退出看门狗未能自动加载。手动执行:"
+    echo "   ⚠ Cmd+Q 拦截器未能加载。手动执行:"
     echo "        launchctl bootstrap gui/$TARGET_UID \"$QG_AGENT\""
+fi
+
+# 辅助功能权限自检 —— 没有它 Cmd+Q 拦截器起不来
+echo "--- 辅助功能权限 ---"
+if [ -f "$BASE_TUN/quit-guard" ]; then
+    echo "   ⚠ Cmd+Q 拦截器需要【辅助功能】权限, 首次安装必须手动授予:"
+    echo "     1. 系统设置 → 隐私与安全性 → 辅助功能"
+    echo "     2. 点 + 添加:  $BASE_TUN/quit-guard"
+    echo "        (在 Finder 里按 Cmd+Shift+G 可直接跳转到该路径)"
+    echo "     3. 勾选它, 然后:  launchctl kickstart -k gui/$TARGET_UID/com.local.v2rayn-quitguard"
+    echo "   未授权时拦截器会退出并留下提示, 其余功能不受影响。"
 fi
 
 # ---------- 7. 自检 ----------

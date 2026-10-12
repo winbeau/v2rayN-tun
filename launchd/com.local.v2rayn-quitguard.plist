@@ -1,15 +1,23 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  v2rayN 退出看门狗
+  v2rayN 的 Cmd+Q 拦截器
 
-  作用: 误按 Cmd+Q 时弹窗要求长按确认, 否则自动把 v2rayN 拉回来。
-  常驻运行, 由 install.sh 安装到 ~/Library/LaunchAgents/。
+  用 CGEventTap 在按键阶段吞掉 Cmd+Q, 让 v2rayN 根本收不到 —— 它是"不会退出",
+  而不是"退出后被拉回来"。只在 v2rayN 是前台应用时拦截, 其他应用不受影响。
+
+  ⚠️ 硬前提: 辅助功能(Accessibility)权限
+     macOS 不允许没有该权限的程序拦截键盘事件。
+     首次安装后必须手动授予:
+       系统设置 → 隐私与安全性 → 辅助功能 → 添加
+       /usr/local/libexec/v2rayn-tun/quit-guard
+     然后重新启动本服务:
+       launchctl kickstart -k gui/$(id -u)/com.local.v2rayn-quitguard
 
   为什么是 LaunchAgent 而不是 LaunchDaemon:
-    · 需要弹窗 —— 必须跑在用户的 GUI 会话里
-    · 需要 open -a v2rayN —— 必须以用户身份启动
-    · 需要检测用户进程 —— 同会话才准
+    · CGEventTap 作用于当前登录会话 —— 必须在 GUI 会话里
+    · 需要弹窗和读取用户目录下的开关文件
+    · 辅助功能权限是按"用户 + 程序"授予的, 系统级守护拿不到
 -->
 <plist version="1.0">
 <dict>
@@ -18,18 +26,20 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/bash</string>
-        <string>__USER_HOME__/Library/Application Support/v2rayN-tun/quit-guard.sh</string>
+        <string>/usr/local/libexec/v2rayn-tun/quit-guard</string>
     </array>
 
     <key>RunAtLoad</key>
     <true/>
 
-    <!-- 常驻。脚本内部有状态机, 被 launchd 重启也不会误判成"需要保护"。 -->
+    <!--
+      常驻。被 launchd 重启是安全的: 拦截器不保存状态,
+      "是否已被用户确认退出"完全由 v2rayN 自己的存活状态决定。
+    -->
     <key>KeepAlive</key>
     <true/>
 
-    <!-- 只在图形会话里跑, 否则弹不出窗口 -->
+    <!-- 只在图形会话里跑, 否则拿不到 event tap 也弹不出窗口 -->
     <key>LimitLoadToSessionType</key>
     <string>Aqua</string>
 
@@ -39,6 +49,6 @@
     <string>__USER_HOME__/Library/Logs/v2rayn-quitguard.err</string>
 
     <key>ProcessType</key>
-    <string>Background</string>
+    <string>Interactive</string>
 </dict>
 </plist>
