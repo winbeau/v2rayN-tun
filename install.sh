@@ -90,6 +90,31 @@ install_subst "$REPO/daemon/dnsguard.sh" "$BASE_GUARD/dnsguard.sh" 755
 install_subst "$REPO/config/sing-box.json" "$BASE_TUN/config.json" 644
 echo "   run-tun.sh / dnsguard.sh / config.json"
 
+# ---------- 2b. 退出看门狗的确认对话框 ----------
+# 用 swiftc 现场编译一个原生对话框(带长按进度条和倒计时)。
+# 编译失败不致命 —— quit-guard.sh 会自动退回 osascript 静态对话框。
+echo "--- 2b. 编译退出确认对话框 ---"
+DIALOG="$BASE_TUN/quit-guard-dialog"
+if command -v swiftc >/dev/null 2>&1; then
+    if swiftc -O -o "$DIALOG" "$REPO/daemon/quit-guard-dialog.swift" 2>/tmp/dialog-build.log; then
+        chown root:wheel "$DIALOG"; chmod 755 "$DIALOG"
+        echo "   ✓ 已编译 (长按进度条 + 倒计时)"
+    else
+        echo "   ⚠ 编译失败, 将回退到 osascript 对话框:"
+        head -3 /tmp/dialog-build.log | sed 's/^/      /'
+    fi
+else
+    echo "   ⚠ 未安装 Xcode Command Line Tools (swiftc 不可用)"
+    echo "     将使用 osascript 对话框(功能等价, 但没有长按进度条)"
+    echo "     想装: xcode-select --install"
+fi
+# 看门狗本体放在用户目录下 —— 它必须以用户身份运行才能弹窗和 open -a
+QG_DIR="$TARGET_HOME/Library/Application Support/v2rayN-tun"
+mkdir -p "$QG_DIR"
+install_subst "$REPO/daemon/quit-guard.sh" "$QG_DIR/quit-guard.sh" 755
+chown -R "$TARGET_USER" "$QG_DIR"
+echo "   quit-guard.sh -> $QG_DIR"
+
 # ---------- 3. 权限收紧 ----------
 echo "--- 3. 权限 (全部 root 所有, 用户不可写) ---"
 chown -R root:wheel "$BASE_TUN" "$BASE_GUARD"
@@ -109,6 +134,13 @@ mkdir -p "$AGENT_DIR"
 cp "$REPO/launchd/v2rayN-LaunchAgent.plist" "$AGENT_DIR/v2rayN-LaunchAgent.plist"
 chown "$TARGET_USER" "$AGENT_DIR/v2rayN-LaunchAgent.plist"
 chmod 644 "$AGENT_DIR/v2rayN-LaunchAgent.plist"
+
+# 退出看门狗 (用户级: 要弹窗 + 要 open -a v2rayN)
+sed "s|__USER_HOME__|$TARGET_HOME|g" "$REPO/launchd/com.local.v2rayn-quitguard.plist" \
+    > "$AGENT_DIR/com.local.v2rayn-quitguard.plist"
+chown "$TARGET_USER" "$AGENT_DIR/com.local.v2rayn-quitguard.plist"
+chmod 644 "$AGENT_DIR/com.local.v2rayn-quitguard.plist"
+echo "   LaunchAgent: v2rayN-LaunchAgent / com.local.v2rayn-quitguard"
 
 # ---------- 5. 日志文件 ----------
 touch /var/log/v2rayn-tun.log /var/log/v2rayn-tun.out.log /var/log/v2rayn-tun.err.log \
@@ -171,6 +203,22 @@ elif launchctl print "gui/$TARGET_UID/v2rayN-LaunchAgent" >/dev/null 2>&1; then
 else
     echo "   ⚠ LaunchAgent 未能自动加载。请以该用户身份手动执行:"
     echo "        launchctl load -w \"$AGENT_SRC\""
+fi
+
+# 退出看门狗 (用户级 LaunchAgent)
+# KeepAlive=true 它会常驻; bootout 后重新 bootstrap 即可刷新脚本
+QG_AGENT="$AGENT_DIR/com.local.v2rayn-quitguard.plist"
+launchctl bootout "gui/$TARGET_UID/com.local.v2rayn-quitguard" 2>/dev/null || true
+sleep 1
+# 状态文件清掉, 避免上一轮的 ARMED=0 让新守护一开始就不设防
+rm -f /tmp/v2rayn-quitguard.state
+if launchctl bootstrap "gui/$TARGET_UID" "$QG_AGENT" 2>/dev/null; then
+    echo "   ✓ 退出看门狗已加载 (误按 Cmd+Q 会弹窗要求长按确认)"
+elif launchctl print "gui/$TARGET_UID/com.local.v2rayn-quitguard" >/dev/null 2>&1; then
+    echo "   ✓ 退出看门狗已在运行"
+else
+    echo "   ⚠ 退出看门狗未能自动加载。手动执行:"
+    echo "        launchctl bootstrap gui/$TARGET_UID \"$QG_AGENT\""
 fi
 
 # ---------- 7. 自检 ----------

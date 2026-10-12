@@ -29,6 +29,10 @@ RUN_CONF="$BASE/config.run.json"
 PROXY_PORT=10808
 LOG=/var/log/v2rayn-tun.log
 POLL=5
+# 代理掉线后等多久才撤 TUN (秒)。配合 quit-guard.sh: 误按 Cmd+Q 时它约 2 秒
+# 就能把 v2rayN 拉回来, 只要这里还没撤, TUN 就一直没断过。
+# 不能设太长: 这段窗口内流量进 TUN 却没有出口, 等于断网。
+GRACE=20
 
 # __USER_HOME__ 由 install.sh 在安装时替换为实际用户主目录
 FLAG="__USER_HOME__/Library/Application Support/v2rayN/tun-disabled"
@@ -62,6 +66,8 @@ prepare_conf() {
 SB_PID=""
 FLAG_LOGGED=""
 LAST_MTU=""
+# 代理掉线的时刻 (epoch 秒)。空 = 代理正常。用于宽限期倒计时。
+DOWN_SINCE=""
 
 start_tun() {
     local info
@@ -127,10 +133,24 @@ while true; do
                 sleep 10
             fi
         fi
+        DOWN_SINCE=""
     else
         if [ -n "$SB_PID" ]; then
-            log "代理端口 $PROXY_PORT 已下线, 撤掉 TUN 以免断网"
-            stop_tun
+            # 宽限期: 代理刚掉线时先等一会儿再撤 TUN。
+            # 目的: 配合 quit-guard.sh —— 误按 Cmd+Q 时它会在大约 2 秒内把
+            #       v2rayN 拉回来, 只要这里还没执行 stop_tun, TUN 就从未断过,
+            #       正在进行的下载/对话不受影响。
+            # 代价: 真的要退出时, 网络会先黑洞 GRACE 秒再恢复直连。
+            #       这段窗口内流量进 TUN 后无出口, 所以不能设太长。
+            NOW=$(/bin/date +%s)
+            if [ -z "$DOWN_SINCE" ]; then
+                DOWN_SINCE=$NOW
+                log "代理端口 $PROXY_PORT 已下线, ${GRACE} 秒宽限期内等待其恢复"
+            elif [ $((NOW - DOWN_SINCE)) -ge "$GRACE" ]; then
+                log "宽限期已过 ($((NOW - DOWN_SINCE)) 秒), 撤掉 TUN 以免断网"
+                stop_tun
+                DOWN_SINCE=""
+            fi
         fi
     fi
     sleep "$POLL"

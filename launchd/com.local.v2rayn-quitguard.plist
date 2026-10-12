@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  v2rayN 退出看门狗
+
+  作用: 误按 Cmd+Q 时弹窗要求长按确认, 否则自动把 v2rayN 拉回来。
+  常驻运行, 由 install.sh 安装到 ~/Library/LaunchAgents/。
+
+  为什么是 LaunchAgent 而不是 LaunchDaemon:
+    · 需要弹窗 —— 必须跑在用户的 GUI 会话里
+    · 需要 open -a v2rayN —— 必须以用户身份启动
+    · 需要检测用户进程 —— 同会话才准
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.local.v2rayn-quitguard</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__USER_HOME__/Library/Application Support/v2rayN-tun/quit-guard.sh</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- 常驻。脚本内部有状态机, 被 launchd 重启也不会误判成"需要保护"。 -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- 只在图形会话里跑, 否则弹不出窗口 -->
+    <key>LimitLoadToSessionType</key>
+    <string>Aqua</string>
+
+    <key>StandardErrorPath</key>
+    <string>__USER_HOME__/Library/Logs/v2rayn-quitguard.err</string>
+    <key>StandardOutPath</key>
+    <string>__USER_HOME__/Library/Logs/v2rayn-quitguard.err</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>
