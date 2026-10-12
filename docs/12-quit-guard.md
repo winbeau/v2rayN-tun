@@ -21,36 +21,36 @@ v2rayN 没有"退出确认"设置（`guiNConfig.json` 全部键、`UiItem`/`GuiI
 
 ## 现在的实现
 
-用 `CGEventTap` 在系统事件流里拦截按键：
+用 `CGEventTap` 在系统事件流里拦截按键。交互是**一个手势**：按住 Cmd+Q。
 
 ```
-你按 Cmd+Q（v2rayN 在前台）
+按住 Cmd+Q（v2rayN 在前台）
    ↓
-CGEventTap 回调
-   ├─ 不是 Cmd+Q            → 放行
-   ├─ 前台不是 v2rayN        → 放行    ← 其他应用完全不受影响
-   └─ 是 → 【立刻吞掉事件】并异步处理
-             ├─ 有 allow-quit 开关 / 无受保护进程 → 原样重发, 正常退出
-             └─ 有受保护进程 → 弹窗
-                  ├─ 长按 8 秒   → 主动 terminate v2rayN
-                  └─ 取消 / 12 秒超时 → 什么也没发生, v2rayN 一直开着
+全屏灰屏糊化 + 红色粗进度条, 随按住时长从左到右填充
+   ├─ 松手            → 淡出取消, v2rayN 继续运行（什么都没发生）
+   └─ 按住满 8 秒     → 主动 terminate v2rayN
 ```
 
-**关键差异：v2rayN 的进程从始至终没有变化。** 实测：
+界面（无边框、无按钮、不抢鼠标，盖住 Dock 与菜单栏）：
 
 ```
-测试前 v2rayN pid: 39993
-  ...按下 Cmd+Q...
-测试后 v2rayN pid: 39993     ← 完全没变
-TUN: 全程保持
+        v2rayN 没有退出 —— Cmd+Q 已被拦截         ← 32pt 粗体白
+        保护中：Terminal、Google Chrome           ← 17pt 半透明
+             3.2 秒后退出 · 松手即取消              ← 倒计时在条【上方】
+   ████████████████░░░░░░░░░░░░░░░░░░░░░░░░       ← 24px 粗条, 红渐变+发光
 ```
 
-日志：
+- 糊化：`NSVisualEffectView(material: .fullScreenUI, blendingMode: .behindWindow)`
+  再叠一层 58% 灰色压暗，保证文字对比度
+- 进度条：玫红 → 正红 → 橙红渐变 + 红色发光 + 上半高光，60fps 渲染 + 轻微缓出
+- 层级：`level = .screenSaver` 盖住 Dock 和菜单栏；`ignoresMouseEvents = true`
+
+**关键点：v2rayN 的进程从始至终没有变化。** 实测（按住 3 秒后松手）：
 
 ```
-05:11:28  event tap 已启用, 只在 v2rayN 为前台应用时拦截 Cmd+Q
-05:11:42  拦截 Cmd+Q: 受保护进程 [Terminal]
-05:12:29  用户取消 —— v2rayN 全程未退出
+v2rayN pid: 42993 -> 42993
+日志: 拦截 Cmd+Q: 受保护进程 [Terminal]
+      按住 3.0 秒后松手 -> 取消, v2rayN 全程未退出
 ```
 
 ## 三个必须写对的点
@@ -147,3 +147,80 @@ launchctl kickstart -k gui/$(id -u)/com.local.v2rayn-quitguard
    拦不到。这符合"防手误"的定位：手误基本都是快捷键，走菜单是明确意图。
 4. `run-tun.sh` 的 `GRACE` 已调回 8 秒 —— 它现在纯粹是防抖（给 v2rayN 崩溃后
    自动重启留个窗口），不再需要兜住"关掉再拉起来"。
+
+---
+
+## 踩过的三个坑（都在这一版修掉了）
+
+### 坑 1：未授权时退出 -> 弹窗无限循环
+
+最初写的是"没权限就 `exit(2)`"。而 LaunchAgent 配了 `KeepAlive=true` —— launchd
+立刻把它重启，每次启动又调一次权限请求，**系统弹窗无限循环**。
+
+更糟的是那个弹窗的默认按钮是「**Deny**」（蓝色高亮）。反复弹出时很容易顺手点掉，
+TCC 就记下拒绝，之后一直授权失败。
+
+**现在**：未授权时**留在原地**每 2 秒重试，拿到权限立刻继续，全程不需要重启服务。
+弹窗只出现一次。
+
+### 坑 2：计时器在模态循环里不触发
+
+第一版用 `NSApp.runModal` 显示窗口，而 `Timer.scheduledTimer` 注册在 `.default`
+run loop 模式 —— **模态循环跑的是 `.modalPanel` 模式，计时器根本不触发**。
+
+实测表现为"12 秒超时"实际 47 秒才触发，而且**长按检测也是坏的**（同一个机制）。
+
+**现在**：全部改成 `RunLoop.current.add(timer, forMode: .common)`，
+并且新版没有模态循环。
+
+### 坑 3：重新编译会让辅助功能授权失效
+
+TCC 的授权绑定二进制的 **CDHash**。这个二进制是 adhoc 签名、没有 Team ID
+（`security find-identity` 显示 `0 valid identities found`），
+**重新编译等于换了一个程序**，授权立即失效。
+
+**现状**：`install.sh` 会比对源码哈希，没变就跳过编译：
+
+```
+✓ 源码未变, 保留现有二进制 (避免让辅助功能授权失效)
+```
+
+**彻底解法**（未做）：用自签名证书给二进制签名。那样 TCC 基于证书而非 CDHash，
+重编译也不失效。需要动钥匙串，属于可选优化。
+
+### 排查这类问题的正确方法
+
+**看 TCC 的系统日志**，它会把每一次授权变更都记下来：
+
+```bash
+log show --last 10m --predicate 'subsystem == "com.apple.TCC"' --style compact \
+  | grep -i "quit-guard"
+```
+
+输出形如：
+
+```
+05:27:41  Publishing <TCCDEvent: type=Modify, service=kTCCServiceAccessibility,
+                       identifier_type=Path, identifier=/usr/local/libexec/.../quit-guard>
+05:27:49  Publishing <TCCDEvent: type=Delete, ...>     ← 删掉旧的
+05:27:53  Publishing <TCCDEvent: type=Modify, ...>     ← 重新添加
+```
+
+**比在设置界面里反复点有用得多** —— 它能直接告诉你授权是"成功了但程序没跑"，
+还是"根本没记录"。
+
+对照一下二进制自身的身份：
+
+```bash
+codesign -dv --verbose=4 /usr/local/libexec/v2rayn-tun/quit-guard 2>&1 | grep CDHash
+```
+
+以及程序的自我报告（`~/Library/Logs/v2rayn-quitguard.log`）：
+
+```
+=== quit-guard 启动: 尚未获得辅助功能权限 ===     ← 它认为自己没权限
+event tap 已启用: 只有 v2rayN 在前台时…          ← 它认为自己有权限
+```
+
+**三边对齐才能定位问题。** 这次就是"TCC 显示已授权，但服务压根没启动" ——
+光看设置界面永远查不出来。

@@ -98,15 +98,44 @@ echo "   run-tun.sh / dnsguard.sh / config.json"
 # 首次运行会弹系统提示, 需要到「系统设置 → 隐私与安全性 → 辅助功能」里勾选。
 echo "--- 2b. 编译 Cmd+Q 拦截器 ---"
 QG_BIN="$BASE_TUN/quit-guard"
-if command -v swiftc >/dev/null 2>&1; then
+
+# ⚠️ 必须先停掉旧实例再覆盖二进制。
+#    正在运行的二进制文件无法被覆盖 (cp 报 Permission denied) —— 与 sing-box
+#    那个"重新签名"的坑同源。bootout 是异步的, 所以要等一下。
+QG_LABEL="gui/$(id -u "$TARGET_USER")/com.local.v2rayn-quitguard"
+if launchctl print "$QG_LABEL" >/dev/null 2>&1; then
+    launchctl bootout "$QG_LABEL" 2>/dev/null || true
+    for _ in $(seq 1 10); do
+        launchctl print "$QG_LABEL" >/dev/null 2>&1 || break
+        sleep 1
+    done
+    echo "   已停止旧实例以便覆盖二进制"
+fi
+# ⚠️ 只在源码变了的时候才重新编译。
+#    macOS 的辅助功能授权绑定二进制的 CDHash, 而这个二进制是 adhoc 签名、
+#    没有 Team ID —— 重新编译等于换了一个程序, 授权立即失效, 拦截器会
+#    以"缺少辅助功能权限"退出。无谓的重编译只会逼用户反复去设置里重新添加。
+QG_HASH_FILE="$BASE_TUN/.quit-guard.src-hash"
+QG_SRC_HASH=$(shasum -a 256 "$REPO/daemon/quit-guard.swift" 2>/dev/null | cut -d' ' -f1)
+QG_NEED_BUILD=1
+if [ -x "$QG_BIN" ] && [ -f "$QG_HASH_FILE" ] && \
+   [ "$(cat "$QG_HASH_FILE" 2>/dev/null)" = "$QG_SRC_HASH" ]; then
+    QG_NEED_BUILD=0
+    echo "   ✓ 源码未变, 保留现有二进制 (避免让辅助功能授权失效)"
+fi
+
+if [ "$QG_NEED_BUILD" = "1" ] && command -v swiftc >/dev/null 2>&1; then
     if swiftc -O -o "$QG_BIN" "$REPO/daemon/quit-guard.swift" 2>/tmp/quitguard-build.log; then
         chown root:wheel "$QG_BIN"; chmod 755 "$QG_BIN"
+        echo "$QG_SRC_HASH" > "$QG_HASH_FILE"
         echo "   ✓ 已编译 (按键层拦截, 不影响其他应用的 Cmd+Q)"
+        echo "   ⚠ 二进制变了 -> 辅助功能授权可能失效, 若拦截器起不来请重新添加:"
+        echo "      $QG_BIN"
     else
         echo "   ❌ 编译失败:"
         head -5 /tmp/quitguard-build.log | sed 's/^/      /'
     fi
-else
+elif [ "$QG_NEED_BUILD" = "1" ]; then
     echo "   ❌ 缺少 swiftc (Xcode Command Line Tools)"
     echo "      安装: xcode-select --install"
     echo "      没有它就无法做 Cmd+Q 拦截 —— 这个功能必须编译原生代码。"
