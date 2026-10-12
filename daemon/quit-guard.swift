@@ -58,20 +58,25 @@ func log(_ msg: String) {
     }
 }
 
+// ⚠️ 不要用 NSWorkspace.shared.runningApplications 全量枚举。
+//    它会遍历系统里所有 App(含 /System/Applications 下受 SIP 保护的包), 触发
+//    kTCCServiceSystemPolicyAllFiles 检查, 系统就弹"想控制这台 Mac 并访问你的数据"。
+//    我们只需要知道名单里那几个在不在跑 —— 定向查询就够了, 不碰别的。
 func protectedApps() -> [String] {
     var names: [String] = []
-    for app in NSWorkspace.shared.runningApplications {
-        guard let bid = app.bundleIdentifier, PROTECTED_BUNDLE_IDS.contains(bid),
+    for bid in PROTECTED_BUNDLE_IDS {
+        guard let app = NSRunningApplication
+                .runningApplications(withBundleIdentifier: bid).first,
               !app.isTerminated else { continue }
         names.append(app.localizedName ?? bid)
     }
     return Array(Set(names)).sorted()
 }
 
+// 同上: 定向查询, 不做全量枚举
 func v2raynApp() -> NSRunningApplication? {
-    NSWorkspace.shared.runningApplications.first {
-        $0.bundleIdentifier == V2RAYN_BUNDLE_ID && !$0.isTerminated
-    }
+    NSRunningApplication.runningApplications(withBundleIdentifier: V2RAYN_BUNDLE_ID)
+        .first { !$0.isTerminated }
 }
 
 // ---------------- 粗进度条 ----------------
