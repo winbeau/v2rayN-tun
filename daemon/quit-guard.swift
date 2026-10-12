@@ -361,46 +361,30 @@ let EVENT_MARKER: Int64 = 0x51_55_47_44   // 'QUGD'
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
 
-// 权限检查与等待。
+// ---------------- 权限检查 ----------------
 //
-// ⚠️ 这里【绝不能】在未授权时退出。
-//    之前是 exit(2), 而 LaunchAgent 有 KeepAlive=true —— launchd 立刻把它重启,
-//    每次启动又弹一次权限请求, 于是系统弹窗无限循环。更糟的是那个弹窗的默认
-//    按钮是「Deny」, 用户很容易顺手点掉, TCC 就记下拒绝, 之后一直授权失败。
+// ⚠️ 这里【绝对不要】调用 AXIsProcessTrustedWithOptions(prompt: true)。
 //
-//    现在的做法: 未授权时【留在原地】每 2 秒重试, 拿到权限就立刻继续,
-//    全程不需要重启服务。这样弹窗只出现一次, 授权后立即生效。
-func waitForAccessibility() -> Bool {
-    if AXIsProcessTrusted() { return true }
-
-    log("=== quit-guard 启动: 尚未获得辅助功能权限 ===")
-    log("    已弹出系统提示。请到「系统设置 → 隐私与安全性 → 辅助功能」")
-    log("    勾选: /usr/local/libexec/v2rayn-tun/quit-guard")
-    log("    (如果列表里已有多条 quit-guard, 全部删掉再重新添加一次)")
-    log("    授权后本程序会自动继续, 不需要重启服务。")
-
-    // 带 prompt 的版本会弹系统提示。只调一次, 避免反复弹。
-    let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-    _ = AXIsProcessTrustedWithOptions(opts)
-
-    // 原地等待, 每 2 秒查一次(用不带 prompt 的版本, 不再弹窗)
-    var waited = 0
-    while !AXIsProcessTrusted() {
-        Thread.sleep(forTimeInterval: 2.0)
-        waited += 2
-        if waited % 30 == 0 {
-            log("    仍在等待辅助功能授权 (\(waited) 秒)…")
-        }
-        if waited > 3600 {   // 一小时还没给就算了, 别无限占着
-            log("    等待超过 1 小时, 放弃。重新运行服务即可再试。")
-            exit(0)
-        }
-    }
-    log("=== 已获得辅助功能权限 (等待 \(waited) 秒) ===")
-    return true
+//    那个 API 会弹系统授权框。配合 LaunchAgent 的重启(或用户的任何操作),
+//    弹窗会反复出现 —— 用户实测"每点一次就在新位置弹一个新的, 无止境"。
+//    而且那个框的默认按钮是「Deny」(蓝色高亮), 顺手点掉就会让 TCC 记下拒绝。
+//
+//    正确做法: 只做【静默检查】(AXIsProcessTrusted 不带 prompt)。
+//    没权限就安静退出, 由 launchd 按 ThrottleInterval 慢慢重试, 不弹任何窗。
+//    用户自己去「系统设置 → 隐私与安全性 → 辅助功能」手动添加即可。
+func hasAccessibility() -> Bool {
+    AXIsProcessTrusted()          // 纯查询, 不弹窗
 }
 
-_ = waitForAccessibility()
+if !hasAccessibility() {
+    log("=== quit-guard: 尚未获得辅助功能权限, 静默退出 (不弹窗) ===")
+    log("    手动添加方法: 系统设置 → 隐私与安全性 → 辅助功能 → +")
+    log("    路径: /usr/local/libexec/v2rayn-tun/quit-guard")
+    FileHandle.standardError.write(
+        "quit-guard: 缺少辅助功能权限。请在 系统设置 → 隐私与安全性 → 辅助功能 里添加本程序。\n"
+            .data(using: .utf8)!)
+    exit(0)      // 静默退出。plist 里 ThrottleInterval 会限制重试频率。
+}
 
 let mask = (1 << CGEventType.keyDown.rawValue)
          | (1 << CGEventType.keyUp.rawValue)
@@ -450,15 +434,12 @@ guard let tap = CGEvent.tapCreate(
     },
     userInfo: nil
 ) else {
-    // 走到这里通常是权限刚被撤销(例如二进制被替换过)。不退出, 原地等着,
-    // 免得 KeepAlive 反复重启又反复弹窗。
-    log("❌ 无法创建 event tap —— 权限可能在二进制更新后失效了。")
-    log("   请到「系统设置 → 隐私与安全性 → 辅助功能」里删除旧的 quit-guard 条目,")
-    log("   再重新添加: /usr/local/libexec/v2rayn-tun/quit-guard")
-    log("   本程序会留在原地等待, 授权后自动继续。")
-    while !AXIsProcessTrusted() { Thread.sleep(forTimeInterval: 2.0) }
-    log("=== 权限已恢复, 请重新启动本服务以创建 event tap ===")
-    exit(0)
+    // 权限显示有、但 event tap 建不起来 —— 通常是 TCC 里那条记录的 CDHash
+    // 和当前二进制对不上(例如刚换过二进制)。静默退出, 不弹窗、不空转。
+    log("❌ 无法创建 event tap —— TCC 记录可能与当前二进制不匹配。")
+    log("   请到「系统设置 → 隐私与安全性 → 辅助功能」里删掉 quit-guard 条目后重新添加:")
+    log("   /usr/local/libexec/v2rayn-tun/quit-guard")
+    exit(3)
 }
 
 globalTap = tap

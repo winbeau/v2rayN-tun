@@ -48,6 +48,13 @@
     <key>StandardOutPath</key>
     <string>__USER_HOME__/Library/Logs/v2rayn-quitguard.err</string>
 
+    <!--
+      未授权时程序会静默 exit(0), KeepAlive 会让 launchd 重启它。
+      ThrottleInterval 限制重启频率为 60 秒一次 —— 避免空转, 也不会有任何弹窗。
+    -->
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+
     <key>ProcessType</key>
     <string>Interactive</string>
 </dict>

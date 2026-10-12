@@ -7,27 +7,16 @@ v2rayN 没有"退出确认"设置（`guiNConfig.json` 全部键、`UiItem`/`GuiI
 
 结果：正在下载或跟 ChatGPT 对话时手一抖，TUN 被撤、连接全断。
 
-## 走过的弯路
+## 最终方案
 
-**第一版做成了"检测到退出后把 v2rayN 拉回来"。** 这是错的设计，两个硬伤：
-
-1. **v2rayN 真的关过一次** —— 进程重建、窗口重建、连接重建。靠 `run-tun.sh`
-   的宽限期只是让 TUN 没来得及撤，应用本身的中断是实打实的。
-2. **和 `GRACE` 强耦合** —— 宽限期必须大于弹窗超时，`GRACE` 被迫拉到 20 秒。
-   而这段窗口里流量进 TUN 却没有出口，等于断网；真要退出时得等 20 秒才恢复直连。
-
-**正确做法是在按键阶段就拦下来**，让 v2rayN 根本收不到 `Cmd+Q`。
-它不退出，就不存在"重建"这回事。
-
-## 现在的实现
-
-用 `CGEventTap` 在系统事件流里拦截按键。交互是**一个手势**：按住 Cmd+Q。
+用 `CGEventTap` 在系统事件流里把 `Cmd+Q` 吞掉，**v2rayN 根本收不到这个事件**。
+它不退出，就不存在"重建"。
 
 ```
 按住 Cmd+Q（v2rayN 在前台）
    ↓
-全屏灰屏糊化 + 红色粗进度条, 随按住时长从左到右填充
-   ├─ 松手            → 淡出取消, v2rayN 继续运行（什么都没发生）
+全屏灰屏糊化 + 红色粗进度条，随按住时长从左到右填充
+   ├─ 松手            → 淡出取消，v2rayN 继续运行（什么都没发生）
    └─ 按住满 8 秒     → 主动 terminate v2rayN
 ```
 
@@ -42,185 +31,234 @@ v2rayN 没有"退出确认"设置（`guiNConfig.json` 全部键、`UiItem`/`GuiI
 
 - 糊化：`NSVisualEffectView(material: .fullScreenUI, blendingMode: .behindWindow)`
   再叠一层 58% 灰色压暗，保证文字对比度
-- 进度条：玫红 → 正红 → 橙红渐变 + 红色发光 + 上半高光，60fps 渲染 + 轻微缓出
-- 层级：`level = .screenSaver` 盖住 Dock 和菜单栏；`ignoresMouseEvents = true`
+- 进度条：玫红 → 正红 → 橙红渐变 + 红色发光 + 上半高光，60fps + 轻微缓出
+- 只对 v2rayN 生效：双重限定（必须是 Cmd+Q，且前台应用 bundle id 是 `2dust.v2rayN`）
 
-**关键点：v2rayN 的进程从始至终没有变化。** 实测（按住 3 秒后松手）：
+实测（按住 3 秒后松手）：
 
 ```
-v2rayN pid: 42993 -> 42993
-日志: 拦截 Cmd+Q: 受保护进程 [Terminal]
-      按住 3.0 秒后松手 -> 取消, v2rayN 全程未退出
+v2rayN pid: 42993 -> 42993          ← 进程从未变化
+日志: 按住 3.0 秒后松手 -> 取消, v2rayN 全程未退出
 ```
 
-## 三个必须写对的点
+对照（TextEdit 在前台按 Cmd+Q）：正常退出，拦截计数不变 ✓
 
-### 1. 事件回调绝不能阻塞
+---
 
-`CGEventTap` 的回调如果卡住，**冻住的是整个系统的键盘输入**，不只是 v2rayN。
+## 走过的弯路
 
-所以回调里只做极快的判断然后立刻返回，弹窗和后续处理全部丢到后台队列。
-需要"放行"时用重发事件的方式补回去：
+这一节比结论重要。这个功能前后推倒重做了三次，**每次都是因为一个更基础的
+认知错误**，而每个错误都让用户白做了一轮授权操作。
+
+### 弯路 1：做成"退出后拉回来"
+
+第一版是"检测到 v2rayN 退出，如果有程序在用网就把它重新拉起来"。当时的理由是
+"第三方拦不住 Cmd+Q，只能事后补救" —— **这个前提本身就是错的**，
+`CGEventTap` 完全可以在按键阶段拦截。
+
+错在哪：
+
+1. **v2rayN 真的关过一次** —— 进程重建、窗口重建、连接重建。靠 `run-tun.sh`
+   的宽限期只是让 TUN 没来得及撤，应用本身的中断是实打实的。
+2. **和 `GRACE` 强耦合** —— 宽限期必须大于弹窗超时，`GRACE` 被迫从 15 拉到 20 秒。
+   而这段窗口里流量进 TUN 却没有出口，等于断网。
+
+### 弯路 2：事件回调里阻塞
+
+改成 `CGEventTap` 之后，第一版在回调里用 `sem.wait()` 等弹窗结果。
+
+**`CGEventTap` 的回调阻塞，冻住的是整个系统的键盘输入**，不只是 v2rayN ——
+最长会冻 12 秒。
+
+正确做法：回调只做判断后立刻返回，处理全部丢后台队列；需要"放行"时用
+`postToPid` 重发事件，并带 `eventSourceUserData` 标记避免被自己再拦一次。
+
+### 弯路 3（最惨）：TCC 授权的连环坑
+
+这一轮折腾最久，因为它把三个独立的问题串成了一条死循环链：
+
+#### 3.1 主动弹窗 + KeepAlive = 弹窗无限循环
+
+代码里调了 `AXIsProcessTrustedWithOptions(prompt: true)` —— **这个 API 会主动
+弹系统授权框**。而 LaunchAgent 配了 `KeepAlive=true`，程序没权限就退出、launchd
+立刻重启、启动又弹一次 → **弹窗无限循环**。
+
+更糟的是那个框的默认按钮是 **`Deny`**（蓝色高亮）。反复弹出时用户很容易顺手
+点掉，TCC 就记下拒绝，之后一直授权失败。
+
+**现在**：只用不带 prompt 的 `AXIsProcessTrusted()` 静默查询。没权限就安静
+`exit(0)`，靠 `ThrottleInterval=60` 限制重试频率，**不弹任何窗**。
+
+#### 3.2 adhoc 签名 + 重编译 = 授权反复失效
+
+TCC 的判定依据（designated requirement）随签名方式不同：
+
+```
+adhoc 签名:  designated => identifier "quit-guard" and cdhash H"c8284874..."
+                                              ^^^^^^ 每次重编译都变
+
+证书签名:    designated => identifier "com.local.v2rayn.quitguard"
+                           and certificate root = H"c61c98d8..."
+                           ^^^^^^^^^^^^^^^^ 稳定
+```
+
+这台机器原本没有代码签名证书（`security find-identity` 显示
+`0 valid identities found`），只能 adhoc 签名 → **每次重编译都要重新授权**。
+
+我为了修 bug 反复重编译，累计出一堆 CDHash 对不上的 TCC 记录，最终演变成
+用户看到的"授权框反复弹出、点了还有"。
+
+**解法**：`scripts/setup-signing-cert.sh` 创建本地自签名证书，`install.sh`
+编译后自动用它签名。详见下节。
+
+#### 3.3 全局 `tccutil reset` 的连带伤害
+
+排查时我跑了 `tccutil reset Accessibility`（**不带 bundle id 的全局重置**），
+它清掉了**系统里所有应用**的辅助功能授权，包括终端本身 —— 直接导致
+`osascript is not allowed assistive access (-25211)`，我的自动化工具全废了。
+
+**教训**：能带标识就带标识；全局重置是不可逆的破坏性操作，影响面远超预期。
+这个二进制是裸可执行文件（没有 bundle id），`tccutil reset Accessibility
+com.local.v2rayn.quitguard` 会报 `No such bundle identifier` —— 所以当时只能
+全局重置。**但正确顺序应该是：先确认影响范围，优先考虑手动在设置里删除条目，
+把全局重置当作最后手段。**
+
+### 弯路 4：`NSWorkspace.runningApplications` 触发完全磁盘访问
+
+TCC 日志统计 quit-guard 请求过的服务：
+
+```
+14 次  kTCCServiceAccessibility          辅助功能      ← 我们真正需要的
+ 4 次  kTCCServiceSystemPolicyAllFiles   完全磁盘访问  ← 根本不需要
+```
+
+```
+tccd: Failed to match existing code requirement for subject
+      /usr/local/libexec/v2rayn-tun/quit-guard
+      and service kTCCServiceSystemPolicyAllFiles
+```
+
+源头是 `NSWorkspace.shared.runningApplications` —— 它**枚举系统里所有 App**，
+包括 `/System/Applications` 下受 SIP 保护的应用包，于是触发 FDA 检查，系统弹出
+「想控制这台 Mac 并访问你的数据」。
+
+**改成按 bundle id 定向查询**，只查名单里那几个：
 
 ```swift
-original.setIntegerValueField(.eventSourceUserData, value: EVENT_MARKER)
-original.postToPid(v2raynPID)
+NSRunningApplication.runningApplications(withBundleIdentifier: bid)
 ```
 
-**重发必须带标记**，否则会被自己的 tap 再拦一次 —— 死循环。
+### 弯路 5：模板 plist 的占位符没替换
 
-（第一版就踩了这个坑：在回调里用 `sem.wait()` 等弹窗结果，那会把整机键盘冻住
-最长 12 秒。）
-
-### 2. 只对 v2rayN 生效
-
-```swift
-guard keycode == KEYCODE_Q, event.flags.contains(.maskCommand) else { 放行 }
-guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "2dust.v2rayN" else { 放行 }
-```
-
-对照实测（TextEdit 在前台按 Cmd+Q）：
+手动恢复时我直接 `cp` 了模板 plist，忘了 `__USER_HOME__` 需要替换：
 
 ```
-TextEdit pid: 41178 -> 已退出      ← 正常退出
-拦截次数:     2 -> 2               ← 拦截器完全没插手
+launchd: Service could not initialize: Unable to create stdout directory
+         (//__USER_HOME__/Library/Logs/v2rayn-quitguard.err)
+         error 0x1e - Read-only file system
 ```
 
-### 3. 受保护应用用 Bundle ID，不用进程名
+→ `last exit code = 78: EX_CONFIG`，服务起不来。
 
-```swift
-let PROTECTED_BUNDLE_IDS: Set<String> = [
-    "com.apple.Terminal", "com.googlecode.iterm2", "dev.warp.Warp-Stable", …
-    "com.apple.Safari", "com.google.Chrome", "org.mozilla.firefox", …
-    "com.openai.chat", "com.anthropic.claudefordesktop", …
-]
-```
+`install.sh` 里本来就有 `sed "s|__USER_HOME__|$TARGET_HOME|g"`，是我手动操作时
+绕过了它。**教训：手工恢复配置时，从安装脚本里抄，不要自己拼。**
 
-用 `NSWorkspace.runningApplications` 按 bundle id 匹配，比 `pgrep` 精确，
-不会误命中 `Google Chrome Helper` 之类的子进程。
+---
 
-**浏览器装的 App（PWA）不需要单独处理** —— 它仍然是浏览器主进程在跑，
-列了浏览器就覆盖了。
-
-## 硬前提：辅助功能权限
-
-**macOS 不允许没有辅助功能（Accessibility）权限的程序拦截键盘事件。** 没有它
-`CGEventTap` 直接创建失败。
-
-首次启动时程序会调 `AXIsProcessTrustedWithOptions(prompt: true)` 弹出系统提示并
-把注册项加进列表。**需要在「系统设置 → 隐私与安全性 → 辅助功能」里手动勾选**：
-
-```
-/usr/local/libexec/v2rayN-tun/quit-guard
-```
-
-勾选后重启服务：
+## 签名证书（一次性）
 
 ```bash
-launchctl kickstart -k gui/$(id -u)/com.local.v2rayn-quitguard
+./scripts/setup-signing-cert.sh
 ```
 
-实测观察到一个细节：第一次启动报"未授权"，10 秒后 launchd 的 `KeepAlive` 把它
-重启，这次就显示"已授权"并且 tap 创建成功 —— 系统提示本身会触发注册。
-如果一直起不来，去设置里检查那一项。
+脚本做的事，以及每一步的坑：
 
-## 为什么是 LaunchAgent
+| 步骤 | 坑 |
+|---|---|
+| `openssl req -x509 ... -addext "extendedKeyUsage=critical,codeSigning"` | EKU 必须是 codeSigning，否则不能用于签名 |
+| `openssl pkcs12 -export` | **必须加 `-legacy`**。OpenSSL 3/4 的新默认算法 macOS 不认，报 `MAC verification failed (wrong password?)` —— 而密码其实是对的，极易误判 |
+| `security import -P <非空密码>` | **空密码 macOS 不接受**，同样报上面那个误导性错误 |
+| `security add-trusted-cert -r trustRoot -p codeSign -k ~/Library/.../login.keychain-db` | **必须用用户级域（不加 `-d`）**。用系统域（`-d -k /Library/Keychains/System.keychain`）会报 `authorization was denied since no user interaction was possible` —— 即使用 sudo/osascript 提权也过不去，trustd 要求交互式授权 |
 
-- `CGEventTap` 作用于**当前登录会话** → 必须在 GUI 会话里
-- 要弹窗、要读用户目录下的开关文件
-- 辅助功能权限是按「用户 + 程序」授予的，系统级守护进程拿不到
+验证：
 
-## 放行条件（两个）
+```bash
+security find-identity -v -p codesigning
+codesign -d -r- /usr/local/libexec/v2rayn-tun/quit-guard
+# 期望看到 certificate root = H"..."，而不是 cdhash H"..."
+```
+
+---
+
+## TCC 问题的排查方法
+
+**不要靠反复点设置界面。** 直接看 tccd 的日志，它把每一次授权变更和判定都记下来：
+
+```bash
+# 某个程序被授予/撤销的记录
+log show --last 20m --predicate 'subsystem == "com.apple.TCC"' --style compact \
+  | grep -i "quit-guard"
+
+# 它请求过哪些服务（用来发现"意外的权限请求"）
+log show --last 30m --predicate 'subsystem == "com.apple.TCC"' --style compact \
+  | grep "quit-guard" | grep -oE "service=kTCCService[A-Za-z]+" | sort | uniq -c
+```
+
+典型输出与判读：
+
+```
+type=Modify, service=kTCCServiceAccessibility, identifier_type=Path, identifier=...   ← 用户授权成功
+type=Delete, ...                                                                      ← 用户删掉条目
+AUTHREQ_SUBJECT: subject=/usr/local/libexec/.../quit-guard                            ← 程序在请求
+Failed to match existing code requirement for subject ... and service ...             ← 记录与二进制对不上!
+```
+
+`Failed to match existing code requirement` 就是"CDHash 变了、授权已失效"的
+明确信号 —— 看到它就该重新添加一次，而不是怀疑别的。
+
+### 那个弹窗是谁显示的
+
+```
+AUTHREQ_ATTRIBUTION: accessing={... universalAccessAuthWarn ...} requesting={WindowServer}
+```
+
+`/System/Library/PrivateFrameworks/UniversalAccess.framework/.../universalAccessAuthWarn.app`
+就是显示「**"X" would like to control this Mac and access your data**」的那个进程。
+它可能**卡住不走**，即使触发它的程序已经退出：
+
+```bash
+killall universalAccessAuthWarn     # 关掉卡住的对话框
+```
+
+### 三边对齐才能定位
+
+| 看哪里 | 命令 | 含义 |
+|---|---|---|
+| TCC 记录 | `log show ... \| grep <程序名>` | 系统认为授权是什么状态 |
+| 二进制身份 | `codesign -dv --verbose=4 <二进制> \| grep CDHash` | 它是谁 |
+| 程序自述 | `~/Library/Logs/v2rayn-quitguard.log` | 它认为自己有没有权限 |
+
+**这次就是靠它才发现"TCC 显示已授权，但服务压根没启动"** ——
+光看设置界面永远查不出来。
+
+---
+
+## 放行条件
 
 | 条件 | 说明 |
 |---|---|
 | `touch "…/v2rayN/allow-quit"` | 永久逃生舱，存在就直接放行 |
-| 没有任何受保护进程 | 没程序在用网，退出不影响什么，没必要拦 |
+| 没有任何受保护进程 | 没程序在用网，退出不影响什么 |
+| TUN 没开 | 代理本就没生效，不该拦 |
 
 ## 已知取舍
 
 1. **必须是原生代码。** `osascript` 做不到拦截键盘 —— 它只能显示对话框，
    而那时 v2rayN 已经退出了。所以 `install.sh` 用 `swiftc` 现场编译，
    没有 Xcode Command Line Tools 就装不了（`xcode-select --install`）。
-2. **弹窗会抢焦点。** 刻意的 —— 长按确认需要你的注意力，才叫"防手误"。
-3. **只拦 Cmd+Q。** 菜单里的 Exit、Dock 右键退出、`killall` 都不经过按键事件，
+2. **只拦 Cmd+Q。** 菜单里的 Exit、Dock 右键退出、`killall` 都不经过按键事件，
    拦不到。这符合"防手误"的定位：手误基本都是快捷键，走菜单是明确意图。
-4. `run-tun.sh` 的 `GRACE` 已调回 8 秒 —— 它现在纯粹是防抖（给 v2rayN 崩溃后
-   自动重启留个窗口），不再需要兜住"关掉再拉起来"。
-
----
-
-## 踩过的三个坑（都在这一版修掉了）
-
-### 坑 1：未授权时退出 -> 弹窗无限循环
-
-最初写的是"没权限就 `exit(2)`"。而 LaunchAgent 配了 `KeepAlive=true` —— launchd
-立刻把它重启，每次启动又调一次权限请求，**系统弹窗无限循环**。
-
-更糟的是那个弹窗的默认按钮是「**Deny**」（蓝色高亮）。反复弹出时很容易顺手点掉，
-TCC 就记下拒绝，之后一直授权失败。
-
-**现在**：未授权时**留在原地**每 2 秒重试，拿到权限立刻继续，全程不需要重启服务。
-弹窗只出现一次。
-
-### 坑 2：计时器在模态循环里不触发
-
-第一版用 `NSApp.runModal` 显示窗口，而 `Timer.scheduledTimer` 注册在 `.default`
-run loop 模式 —— **模态循环跑的是 `.modalPanel` 模式，计时器根本不触发**。
-
-实测表现为"12 秒超时"实际 47 秒才触发，而且**长按检测也是坏的**（同一个机制）。
-
-**现在**：全部改成 `RunLoop.current.add(timer, forMode: .common)`，
-并且新版没有模态循环。
-
-### 坑 3：重新编译会让辅助功能授权失效
-
-TCC 的授权绑定二进制的 **CDHash**。这个二进制是 adhoc 签名、没有 Team ID
-（`security find-identity` 显示 `0 valid identities found`），
-**重新编译等于换了一个程序**，授权立即失效。
-
-**现状**：`install.sh` 会比对源码哈希，没变就跳过编译：
-
-```
-✓ 源码未变, 保留现有二进制 (避免让辅助功能授权失效)
-```
-
-**彻底解法**（未做）：用自签名证书给二进制签名。那样 TCC 基于证书而非 CDHash，
-重编译也不失效。需要动钥匙串，属于可选优化。
-
-### 排查这类问题的正确方法
-
-**看 TCC 的系统日志**，它会把每一次授权变更都记下来：
-
-```bash
-log show --last 10m --predicate 'subsystem == "com.apple.TCC"' --style compact \
-  | grep -i "quit-guard"
-```
-
-输出形如：
-
-```
-05:27:41  Publishing <TCCDEvent: type=Modify, service=kTCCServiceAccessibility,
-                       identifier_type=Path, identifier=/usr/local/libexec/.../quit-guard>
-05:27:49  Publishing <TCCDEvent: type=Delete, ...>     ← 删掉旧的
-05:27:53  Publishing <TCCDEvent: type=Modify, ...>     ← 重新添加
-```
-
-**比在设置界面里反复点有用得多** —— 它能直接告诉你授权是"成功了但程序没跑"，
-还是"根本没记录"。
-
-对照一下二进制自身的身份：
-
-```bash
-codesign -dv --verbose=4 /usr/local/libexec/v2rayn-tun/quit-guard 2>&1 | grep CDHash
-```
-
-以及程序的自我报告（`~/Library/Logs/v2rayn-quitguard.log`）：
-
-```
-=== quit-guard 启动: 尚未获得辅助功能权限 ===     ← 它认为自己没权限
-event tap 已启用: 只有 v2rayN 在前台时…          ← 它认为自己有权限
-```
-
-**三边对齐才能定位问题。** 这次就是"TCC 显示已授权，但服务压根没启动" ——
-光看设置界面永远查不出来。
+3. **`swiftc` 编译出的二进制必须签名**，否则每次重编译都会让辅助功能授权失效
+   （见弯路 3.2）。
+4. `run-tun.sh` 的 `GRACE` 是 8 秒 —— 纯粹是防抖（给 v2rayN 崩溃后自动重启留个
+   窗口），不再需要兜住"关掉再拉起来"那套。

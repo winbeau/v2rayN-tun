@@ -9,9 +9,22 @@
 |---|---|
 | [`skills/`](skills/) | **技能包**（agent 入口）。开始相关任务前先读对应的 `SKILL.md` |
 | [`docs/`](docs/README.md) | 排查记录：13 份按主题组织的「弯路 + 解法」 |
-| [`scripts/`](scripts/) | 服务端调优与运维工具（可独立使用） |
-| `config/` `daemon/` `launchd/` | TUN 守护进程的实际安装源文件 |
+| [`scripts/`](scripts/) | 服务端调优、运维工具、签名证书准备（可独立使用） |
+| `config/` `daemon/` `launchd/` | TUN 守护进程与 Cmd+Q 拦截器的安装源文件 |
 | `install.sh` `uninstall.sh` | TUN 守护进程的安装 / 卸载 |
+
+### 装完之后先跑这个（只在新机器上需要）
+
+```bash
+./scripts/setup-signing-cert.sh      # 本地代码签名证书, 一次性
+```
+
+`daemon/quit-guard.swift` 需要**辅助功能**权限，而 macOS 的 TCC 授权对 adhoc
+签名是按 CDHash 校验的 —— **每次重编译都等于换了个程序，授权立即失效**，
+用户得反复去设置里重新添加。用固定证书签名后授权绑定证书，重编译不再失效。
+
+**没有这个证书时，`install.sh` 会回退 adhoc 签名并打印警告 —— 功能能用，
+但每次改代码都会让用户白授权一轮。** 详见 [docs/12](docs/12-quit-guard.md)。
 
 ## 技能索引
 
@@ -59,6 +72,15 @@
    本项目两次「已排除」都是错的，而用户的两次直觉都指向了真因。
 6. **不要用 `sudoers` NOPASSWD 走捷径。** 它会让用户可写目录下的文件获得免提权能力。
 7. **不要自己跑需要密码的 `sudo`。** 把命令交给用户执行。
+8. **不要把"需要用户授权"的步骤排在改动链的中间。** 每改一次代码就要用户重新
+   授权一次（见下条），所以相关改动要**攒够了一次性做完**，否则用户会白做好几轮。
+9. **涉及 TCC 权限的功能，先解决签名的稳定性再动代码。**
+   adhoc 签名的二进制，TCC 授权绑 CDHash，**重编译即失效**。本项目因此让用户
+   反复授权了五六轮，最后演变成"授权框反复弹出、点了还有"。
+   正确顺序是：先把 `scripts/setup-signing-cert.sh` 跑通，再开始改。
+10. **破坏性命令要算影响面。** `tccutil reset Accessibility`（不带标识）会清掉
+   **系统里所有应用**的辅助功能授权，包括终端本身 —— 一次误用就能让整机的
+   自动化工具全废。能带标识就带标识；带不了就优先手动操作。
 
 ## 常用命令
 
@@ -72,6 +94,14 @@ skills/macos-tun-no-proxy/scripts/diagnose.sh --node-ip <IP> --node-port 8443 --
 # 客户端：两个免 sudo 开关
 touch "$HOME/Library/Application Support/v2rayN/tun-disabled"    # 临时关 TUN
 echo 1500 > "$HOME/Library/Application Support/v2rayN/tun-mtu"   # 临时改 MTU
+
+# 客户端：Cmd+Q 拦截器的日志与身份核对
+tail -f "$HOME/Library/Logs/v2rayn-quitguard.log"
+codesign -d -r- /usr/local/libexec/v2rayn-tun/quit-guard   # 应显示 certificate root, 不是 cdhash
+
+# 排查 TCC 授权问题（比在设置界面反复点有用得多）
+log show --last 20m --predicate 'subsystem == "com.apple.TCC"' --style compact | grep -i quit-guard
+killall universalAccessAuthWarn        # 关掉卡住的授权对话框
 ```
 
 ## 扩展阅读
@@ -86,7 +116,13 @@ echo 1500 > "$HOME/Library/Application Support/v2rayN/tun-mtu"   # 临时改 MTU
 | [09](docs/09-vps-tuning.md) | VPS 内核调优与 Cloudflare 优选 IP |
 | [10](docs/10-reality-setup.md) | REALITY 部署踩坑全过程 |
 | [11](docs/11-hysteria2-real-cert.md) | Hysteria2 证书问题与 QUIC 的性能优势 |
+| [12](docs/12-quit-guard.md) | **Cmd+Q 拦截器的五条弯路**，含 TCC 授权的完整排查方法 |
 | [toolbox](docs/toolbox.md) | 命令速查 |
+
+**如果只读一份**：读 [12](docs/12-quit-guard.md)。它记录的不是某个配置怎么写，
+而是**一个功能被推倒重做三次的完整过程** —— 每次都是因为一个更基础的前提假设错了
+（"拦不住 Cmd+Q"、"回调里可以等"、"重编译不影响授权"），而每次错误都让用户
+白做了一轮授权。这类"前提错误"的模式比任何具体解法都更值得记住。
 
 ## 维护提示
 

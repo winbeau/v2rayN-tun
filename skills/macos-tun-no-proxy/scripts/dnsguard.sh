@@ -25,10 +25,35 @@ BASE=/usr/local/libexec/v2rayn-dnsguard
 LOG=/var/log/v2rayn-dnsguard.log
 ADDR_STATE=/var/run/v2rayn-netguard.addr
 RESTART_STAMP=/var/run/v2rayn-netguard.restart
+# 记录被我们改掉之前的原始 DNS。放在持久位置(不是 /var/run), 因为系统 DNS 设置
+# 本身是持久化的 —— 重启后代理若没起来, 也要能把 DNS 还回去。
+ORIG_DNS=$BASE/origdns
+PROXY_PORT=10808
 
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >>"$LOG"; }
 
 [ -e "$BASE/DISABLED" ] && exit 0
+
+svc_for_if() {
+    /usr/sbin/networksetup -listnetworkserviceorder 2>/dev/null | awk -v dev="Device: $1" '
+        /^\([0-9]+\)/ { s=$0; sub(/^\([0-9]+\) /, "", s) }
+        $0 ~ dev     { print s; exit }'
+}
+
+# 读取某网络服务当前手动设置的 DNS; "自动"时 networksetup 会输出一句英文提示
+get_dns() {
+    local out
+    out=$(/usr/sbin/networksetup -getdnsservers "$1" 2>/dev/null | tr '\n' ' ')
+    case "$out" in
+        *"aren't any"*|*"not set"*|"") echo "Empty" ;;
+        *) echo "${out% }" ;;
+    esac
+}
+
+flush_dns() {
+    /usr/bin/dscacheutil -flushcache   2>/dev/null || true
+    /usr/bin/killall -HUP mDNSResponder 2>/dev/null || true
+}
 
 is_onlink() {
     case "$1" in
@@ -43,25 +68,67 @@ is_onlink() {
 PRIMARY_IF=$(/sbin/route -n get default 2>/dev/null | awk '/interface:/{print $2}')
 [ -z "$PRIMARY_IF" ] && exit 0
 
-# ================= 问题 2: 本机地址变化 -> 重启 TUN =================
+# ================= 地址状态: 无条件先记录 =================
+# 必须放在最前面, 且与"代理是否在跑"无关。
+# 理由: 网络变化可能发生在 v2rayN 关闭期间。如果只在代理运行时才记录,
+#       下次打开 v2rayN 会看到"地址变过"而白白重启一次 TUN —— 表现为
+#       刚打开就闪断一下。
+# 同时这也保证了先落状态再做动作(见下方"问题 2"的说明)。
 CUR_ADDR=$(/sbin/ifconfig "$PRIMARY_IF" 2>/dev/null | awk '/inet /{print $2; exit}')
 LAST_ADDR=$(/bin/cat "$ADDR_STATE" 2>/dev/null || true)
-
+ADDR_CHANGED=0
 if [ -n "$CUR_ADDR" ] && [ "$CUR_ADDR" != "$LAST_ADDR" ]; then
-    if [ -n "$LAST_ADDR" ]; then
-        # 防抖: 60 秒内只重启一次, 避免网络抖动导致反复重建 TUN
-        NOW=$(/bin/date +%s)
-        LAST_RESTART=$(/bin/cat "$RESTART_STAMP" 2>/dev/null || echo 0)
-        if [ $((NOW - LAST_RESTART)) -ge 60 ]; then
-            log "网络地址变化 $LAST_ADDR -> $CUR_ADDR, 重启 TUN 让 sing-box 重新绑定出站"
-            /bin/launchctl kickstart -k system/com.local.v2rayn-tun 2>/dev/null || true
-            /bin/echo "$NOW" > "$RESTART_STAMP"
-            sleep 8
-        else
-            log "网络地址变化 $LAST_ADDR -> $CUR_ADDR (距上次重启不足 60 秒, 跳过重启)"
-        fi
-    fi
+    ADDR_CHANGED=1
     /bin/echo "$CUR_ADDR" > "$ADDR_STATE"
+fi
+
+# ================= 问题 3: TUN 不在时, 把 DNS 还回原样 =================
+# 当初改 DNS 是为了让查询跟随默认路由进 TUN —— on-link 的 DNS 会绕过劫持。
+# TUN 不在了这个改动就失去意义, 留着会让系统残留一处非用户设置的配置。
+# 触发时机: 退出 v2rayN 后 run-tun.sh 撤掉 TUN 时会主动 kickstart 本守护。
+if ! /usr/sbin/lsof -nP -iTCP:"$PROXY_PORT" -sTCP:LISTEN 2>/dev/null | grep -q LISTEN; then
+    SVC3=$(svc_for_if "$PRIMARY_IF")
+    if [ -n "$SVC3" ]; then
+        CUR3=$(get_dns "$SVC3")
+        # 只在我们设的值还在时才还原, 避免覆盖用户后来手动改的 DNS
+        if [ "$CUR3" = "$DESIRED_DNS" ]; then
+            if [ -f "$ORIG_DNS" ]; then
+                ORIG=$(/bin/cat "$ORIG_DNS")
+                /usr/sbin/networksetup -setdnsservers "$SVC3" $ORIG
+                log "代理端口 $PROXY_PORT 已下线 -> 还原 DNS「$SVC3」为原值: $ORIG"
+            else
+                # 没有原值记录(例如本逻辑上线前 DNS 就被改过) -> 还原为"自动",
+                # 即由 DHCP/RA 下发, 这是系统未被干预时的默认状态
+                ORIG="Empty"
+                /usr/sbin/networksetup -setdnsservers "$SVC3" Empty
+                log "代理端口 $PROXY_PORT 已下线 -> DNS「$SVC3」还原为自动 (无原值记录)"
+            fi
+            flush_dns
+            sleep 1
+        elif [ -f "$ORIG_DNS" ]; then
+            log "代理已下线, 但当前 DNS「$CUR3」不是我们设的值, 不动它"
+        fi
+        /bin/rm -f "$ORIG_DNS"
+    fi
+    exit 0
+fi
+
+# ================= 问题 2: 本机地址变化 -> 重启 TUN =================
+# 状态已在文件开头无条件记录(先落状态再做动作), 这里只负责决定要不要重启。
+# 这样即使在"重启 TUN -> run-tun 反过来 kickstart 本脚本 -> 本进程被 SIGTERM"
+# 的情况下, 地址状态也已经落盘, 下一次不会重复判定为变化。
+if [ "$ADDR_CHANGED" = 1 ] && [ -n "$LAST_ADDR" ]; then
+    # 防抖: 60 秒内只重启一次, 避免网络抖动导致反复重建 TUN
+    NOW=$(/bin/date +%s)
+    LAST_RESTART=$(/bin/cat "$RESTART_STAMP" 2>/dev/null || echo 0)
+    if [ $((NOW - LAST_RESTART)) -ge 60 ]; then
+        /bin/echo "$NOW" > "$RESTART_STAMP"
+        log "网络地址变化 $LAST_ADDR -> $CUR_ADDR, 重启 TUN 让 sing-box 重新绑定出站"
+        /bin/launchctl kickstart -k system/com.local.v2rayn-tun 2>/dev/null || true
+        sleep 8
+    else
+        log "网络地址变化 $LAST_ADDR -> $CUR_ADDR (距上次重启不足 60 秒, 跳过重启)"
+    fi
 fi
 
 # ================= 问题 1: DNS 回落到 on-link =================
@@ -84,17 +151,22 @@ else
     exit 0
 fi
 
-SVC=$(/usr/sbin/networksetup -listnetworkserviceorder 2>/dev/null | awk -v dev="Device: $PRIMARY_IF" '
-    /^\([0-9]+\)/ { s=$0; sub(/^\([0-9]+\) /, "", s) }
-    $0 ~ dev     { print s; exit }')
+SVC=$(svc_for_if "$PRIMARY_IF")
 [ -z "$SVC" ] && { log "接口 $PRIMARY_IF: $REASON, 但找不到对应网络服务, 跳过"; exit 0; }
+
+# 改之前先把原值记下来, 供「代理下线时还原」使用。
+# 只在首次记录 —— 否则第二次运行会把我们自己设的值当成"原值"存进去。
+if [ ! -f "$ORIG_DNS" ]; then
+    ORIG=$(get_dns "$SVC")
+    /bin/echo "$ORIG" > "$ORIG_DNS"
+    log "记录原始 DNS「$SVC」= $ORIG"
+fi
 
 log "接口 $PRIMARY_IF / 服务「$SVC」: $REASON -> 改回公网 DNS"
 
 /usr/sbin/networksetup -setdnsservers "$SVC" $DESIRED_DNS
-/usr/bin/dscacheutil -flushcache        2>/dev/null || true
-/usr/bin/killall -HUP mDNSResponder     2>/dev/null || true
+flush_dns
 sleep 1
 
-NEW=$(/usr/sbin/networksetup -getdnsservers "$SVC" 2>/dev/null | tr '\n' ' ')
+NEW=$(get_dns "$SVC")
 log "修复完成: $NEW"

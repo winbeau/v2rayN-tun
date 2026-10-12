@@ -22,7 +22,7 @@
 | [09](09-vps-tuning.md) | **VPS 调优与 Cloudflare 优选 IP** ⭐ | CDN 前置的节点，故障点可能在 CDN |
 | [10](10-reality-setup.md) | **启用 Reality + XTLS-Vision** ⭐ | 旧配置的 `dest` 已被静默改名为 `target` |
 | [11](11-hysteria2-real-cert.md) | **修复 Hysteria2（换真证书）** ⭐ | QUIC 无法躲在 CDN 后面；TCP-in-TCP 是隐形税 |
-| [12](12-quit-guard.md) | **误退出保护** ⭐ | 拦不住退出，就把退出的代价降到零 |
+| [12](12-quit-guard.md) | **Cmd+Q 保护（五条弯路）** ⭐⭐ | 三次推倒重做；前提假设错比实现错更致命 |
 | [toolbox](toolbox.md) | **排查命令速查** ⭐ | 本项目真正用上的技巧 |
 
 ---

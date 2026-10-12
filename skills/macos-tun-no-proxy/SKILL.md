@@ -244,8 +244,55 @@ curl -vsk -o /dev/null --interface en0 --max-time 12 \
 7. **退出 v2rayN 后系统无残留** —— TUN 接口/路由消失、系统代理关闭、
    **DNS 还原为「自动」**（不是留着我们设的公网 DNS）、10808 端口释放。
    验证：`networksetup -getdnsservers Wi-Fi` 应输出 *There aren't any DNS Servers set*。
+8. **（可选）装了 Cmd+Q 拦截器时**：`codesign -d -r- /usr/local/libexec/v2rayn-tun/quit-guard`
+   应显示 `certificate root = H"..."` 而**不是** `cdhash H"..."`。
+   是 cdhash 就说明没签名 —— 每次重编译都会让辅助功能授权失效，
+   用户得反复授权。见 [known-issues.md](references/known-issues.md) 第 11 条。
 
 第 6 条最容易被跳过，但它是这套方案的核心价值所在。
+
+## 可选：Cmd+Q 误退出保护（quit-guard）
+
+防止手抖按到 `Cmd+Q` 把代理弄断。用 `CGEventTap` 在按键阶段吞掉事件，
+**v2rayN 根本收不到，所以它不会退出**（不是"退出后拉回来"）。
+
+```
+按住 Cmd+Q（v2rayN 在前台）
+   → 全屏灰屏糊化 + 红色进度条，随按住时长填充
+   松手        → 取消，v2rayN 继续运行
+   按住满 8 秒 → 主动退出
+```
+
+**只对 v2rayN 生效**：双重限定（必须是 Cmd+Q，且前台应用 bundle id 是
+`2dust.v2rayN`）。别的应用按 Cmd+Q 完全不受影响。
+
+### 安装前必须先做这一步
+
+```bash
+./scripts/setup-signing-cert.sh      # 一次性, 本地代码签名证书
+```
+
+**为什么**：拦截键盘需要**辅助功能**权限，而 macOS 的 TCC 授权对 adhoc 签名
+是按 CDHash 校验的 —— **每次重新编译都等于换了个程序，授权立即失效**。
+
+| 签名方式 | designated requirement | 重编译后 |
+|---|---|---|
+| adhoc | `identifier "quit-guard" and cdhash H"..."` | **授权失效** ✗ |
+| 证书 | `identifier "..." and certificate root = H"..."` | 保持有效 ✓ |
+
+**不先解决这个就改代码，用户会被迫反复去设置里重新授权。** 本项目踩过这个坑，
+详见 [docs/12](../../docs/12-quit-guard.md)。
+
+### 两条绝不能犯的错
+
+1. **事件回调里不能阻塞。** `CGEventTap` 回调卡住会冻住**整个系统的键盘输入**，
+   不只是目标应用。回调只做判断就返回，处理丢后台队列；要"放行"时用
+   `postToPid` 重发事件并带 `eventSourceUserData` 标记，否则会被自己再拦一次。
+2. **不要调 `AXIsProcessTrustedWithOptions(prompt: true)`。** 那个 API 会主动弹
+   系统授权框，配合 LaunchAgent 的 `KeepAlive` 就是**弹窗无限循环**；而那个框的
+   默认按钮是 `Deny`，用户顺手点掉就会让 TCC 记下拒绝。
+   只用不带 prompt 的 `AXIsProcessTrusted()` 静默查询，没权限就安静退出，
+   靠 `ThrottleInterval` 限制重试。
 
 ## 故障判断
 
@@ -260,6 +307,8 @@ curl -vsk -o /dev/null --interface en0 --max-time 12 \
 | IPv6 泄漏 | TUN 必须同时持有 IPv6 地址 + `::/0` reject 规则，否则 IPv6 完全绕过代理 |
 | 改完守护不生效 | `launchctl kickstart -k system/<label>`；或确认 `bootout` 已异步完成（硬约束 3） |
 | **守护日志只有「sing-box 立即退出」、无任何报错** | **macOS 26.4+ 的签名问题** —— adhoc 二进制被 `cp` 覆盖后 taskgated 会直接 SIGKILL。`codesign -v` 仍显示 valid，别被它骗过。见 [known-issues.md](references/known-issues.md) 第 9 条 |
+| **Cmd+Q 拦截器反复弹授权框、点了还有** | 别在设置界面里反复点。看 TCC 日志定位：`log show --last 20m --predicate 'subsystem == "com.apple.TCC"' --style compact \| grep quit-guard`。搜 `Failed to match existing code requirement` —— 那是"CDHash 变了、授权已失效"。另外 `killall universalAccessAuthWarn` 关掉卡住的对话框 |
+| **launchd `last exit code = 78: EX_CONFIG`** | plist 里的 `__USER_HOME__` 占位符没替换，日志路径不存在。`install.sh` 会用 `sed` 替换，手工恢复时别直接 `cp` 模板 |
 
 两个 bug 的速查命令：
 
