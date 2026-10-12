@@ -126,11 +126,49 @@ fi
 
 if [ "$QG_NEED_BUILD" = "1" ] && command -v swiftc >/dev/null 2>&1; then
     if swiftc -O -o "$QG_BIN" "$REPO/daemon/quit-guard.swift" 2>/tmp/quitguard-build.log; then
+        # ---- 用固定证书签名 (关键) ----
+        # 辅助功能的 TCC 授权, 对 adhoc 签名是按 CDHash 校验的 —— 每次重编译
+        # 都等于换了个程序, 授权立即失效, 用户得反复去设置里重新添加。
+        # 用固定证书签名后, designated requirement 变成
+        #   identifier "..." and certificate root = H"..."
+        # 于是重编译不会影响授权。
+        #
+        # 证书准备(一次性):
+        #   openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
+        #     -keyout key.pem -out cert.pem \
+        #     -subj "/CN=v2rayN-tun Local Signing/O=v2rayN-tun/OU=Local/C=CN" \
+        #     -addext "basicConstraints=critical,CA:FALSE" \
+        #     -addext "keyUsage=critical,digitalSignature" \
+        #     -addext "extendedKeyUsage=critical,codeSigning"
+        #   openssl pkcs12 -export -legacy -out id.p12 -inkey key.pem -in cert.pem \
+        #     -passout pass:qg-local-2026 -name "v2rayN-tun Local Signing"
+        #   security import id.p12 -k ~/Library/Keychains/login.keychain-db \
+        #     -P qg-local-2026 -T /usr/bin/codesign
+        #   security add-trusted-cert -r trustRoot -p codeSign \
+        #     -k ~/Library/Keychains/login.keychain-db cert.pem     # 用户级, 无需管理员
+        SIGN_ID="v2rayN-tun Local Signing"
+        SIGNED=0
+        if sudo -u "$TARGET_USER" security find-identity -v -p codesigning 2>/dev/null \
+             | grep -q "$SIGN_ID"; then
+            if sudo -u "$TARGET_USER" codesign --force --sign "$SIGN_ID" \
+                 --identifier com.local.v2rayn.quitguard --timestamp=none \
+                 "$QG_BIN" 2>/tmp/quitguard-sign.log; then
+                SIGNED=1
+                echo "   ✓ 已用固定证书签名 (重编译不会再让授权失效)"
+                echo "     要求: $(codesign -d -r- "$QG_BIN" 2>&1 | tail -1 | sed 's/designated => //')"
+            else
+                echo "   ⚠ 签名失败:"; head -3 /tmp/quitguard-sign.log | sed 's/^/      /'
+            fi
+        else
+            echo "   ⚠ 找不到签名证书 \"$SIGN_ID\" —— 将使用 adhoc 签名"
+            echo "     注意: adhoc 签名下, 每次重编译都会让辅助功能授权失效,"
+            echo "           需要重新到「隐私与安全性 → 辅助功能」里添加一次。"
+        fi
+        [ "$SIGNED" = "0" ] && codesign --force --sign - "$QG_BIN" 2>/dev/null || true
+
         chown root:wheel "$QG_BIN"; chmod 755 "$QG_BIN"
         echo "$QG_SRC_HASH" > "$QG_HASH_FILE"
-        echo "   ✓ 已编译 (按键层拦截, 不影响其他应用的 Cmd+Q)"
-        echo "   ⚠ 二进制变了 -> 辅助功能授权可能失效, 若拦截器起不来请重新添加:"
-        echo "      $QG_BIN"
+        [ "$SIGNED" = "0" ] && echo "   ✓ 已编译 (按键层拦截, 不影响其他应用的 Cmd+Q)"
     else
         echo "   ❌ 编译失败:"
         head -5 /tmp/quitguard-build.log | sed 's/^/      /'
