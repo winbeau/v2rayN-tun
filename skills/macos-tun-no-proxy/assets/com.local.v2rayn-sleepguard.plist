@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  合盖不休眠守护
+
+  两件事:
+    1. 开机自检 —— 确保 pmset disablesleep = 1
+       该值本身持久(在 PowerManagement.plist 里), 但系统大版本升级或
+       重置 NVRAM 可能清掉, 所以每次开机确认一遍。
+
+    2. 过热保护 —— 合盖 + 长时间无输入时放开睡眠
+       disablesleep 连合盖睡眠一起挡掉, 装包里会持续发热。
+       超时阈值默认 20 分钟(日常 3-5 分钟的路程远小于它)。
+
+  为什么是 LaunchDaemon:
+    pmset 需要 root 权限。用户级 LaunchAgent 拿不到。
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.local.v2rayn-sleepguard</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/libexec/v2rayn-sleepguard/sleep-guard.sh</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardErrorPath</key>
+    <string>/var/log/v2rayn-sleepguard.err.log</string>
+    <key>StandardOutPath</key>
+    <string>/var/log/v2rayn-sleepguard.out.log</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

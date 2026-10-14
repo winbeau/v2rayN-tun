@@ -41,7 +41,7 @@ echo "--- 1. 复制 sing-box 与规则集 ---"
 #   1. 文件被正在运行的 sing-box 占用时 cp 会失败
 #   2. macOS 26.4+ 起, 覆盖 adhoc 签名二进制后 taskgated 会判定
 #      "Taskgated Invalid Signature" 并直接 SIGKILL —— 必须重新签名
-for p in com.local.v2rayn-tun com.local.v2rayn-dnsguard; do
+for p in com.local.v2rayn-tun com.local.v2rayn-dnsguard com.local.v2rayn-sleepguard; do
     launchctl bootout "system/$p" 2>/dev/null || true
 done
 sleep 2
@@ -179,6 +179,16 @@ elif [ "$QG_NEED_BUILD" = "1" ]; then
     echo "      没有它就无法做 Cmd+Q 拦截 —— 这个功能必须编译原生代码。"
 fi
 
+# ---------- 2c. 合盖不休眠守护 ----------
+# 合盖休眠会让 Wi-Fi 断开、utun 被系统撤掉, 唤醒后 TUN 要 ~30 秒才重建,
+# 这段窗口里应用是直连的 —— 真实 IP 会漏给目标网站。
+# 本守护确保 disablesleep=1 (连合盖睡眠一起挡掉), 同时带过热保护。
+echo "--- 2c. 安装合盖不休眠守护 ---"
+BASE_SG="/usr/local/libexec/v2rayn-sleepguard"
+mkdir -p "$BASE_SG"
+install_subst "$REPO/daemon/sleep-guard.sh" "$BASE_SG/sleep-guard.sh" 755
+echo "   sleep-guard.sh -> $BASE_SG  (合盖阈值 ${SLEEP_TIMEOUT:-1200}s)"
+
 # ---------- 3. 权限收紧 ----------
 echo "--- 3. 权限 (全部 root 所有, 用户不可写) ---"
 chown -R root:wheel "$BASE_TUN" "$BASE_GUARD"
@@ -190,7 +200,7 @@ xattr -dr com.apple.quarantine "$BASE_TUN" "$BASE_GUARD" 2>/dev/null || true
 
 # ---------- 4. 安装 launchd 定义 ----------
 echo "--- 4. 安装 LaunchDaemon / LaunchAgent ---"
-for p in com.local.v2rayn-tun com.local.v2rayn-dnsguard; do
+for p in com.local.v2rayn-tun com.local.v2rayn-dnsguard com.local.v2rayn-sleepguard; do
     cp "$REPO/launchd/$p.plist" "$LAUNCHD/$p.plist"
     chown root:wheel "$LAUNCHD/$p.plist"; chmod 644 "$LAUNCHD/$p.plist"
 done
@@ -215,7 +225,7 @@ chmod 644 /var/log/v2rayn-*.log 2>/dev/null
 
 # ---------- 6. 加载 ----------
 echo "--- 5. 加载守护进程 ---"
-SERVICES="com.local.v2rayn-tun com.local.v2rayn-dnsguard"
+SERVICES="com.local.v2rayn-tun com.local.v2rayn-dnsguard com.local.v2rayn-sleepguard"
 
 # 先全部 bootout。注意: bootout 是异步的, 旧实例(含其子进程)需要时间退出,
 # 若立刻 bootstrap 会失败并报 "Bootstrap failed: 5: Input/output error"。
@@ -313,7 +323,7 @@ else
 fi
 
 LOADED_OK=1
-for p in com.local.v2rayn-tun com.local.v2rayn-dnsguard; do
+for p in com.local.v2rayn-tun com.local.v2rayn-dnsguard com.local.v2rayn-sleepguard; do
     st=$(launchctl print "system/$p" 2>/dev/null | grep -o 'state = [a-z ]*' | head -1)
     if [ -z "$st" ]; then
         printf "   %-28s ❌ 未加载\n" "$p"
