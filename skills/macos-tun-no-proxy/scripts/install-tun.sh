@@ -71,6 +71,14 @@ install_subst "$SKILL_DIR/assets/sing-box.json" "$BASE_TUN/config.json" 644
 echo "   run-tun.sh / dnsguard.sh / config.json"
 
 # ---------- 3. 权限收紧 ----------
+# 合盖不休眠守护 —— 消除"休眠唤醒后 TUN 重建期间真实 IP 泄漏"的窗口
+BASE_SLEEP=/usr/local/libexec/v2rayn-sleepguard
+mkdir -p "$BASE_SLEEP"
+if [ -f "$SCRIPT_DIR/sleep-guard.sh" ]; then
+    sed "s|__USER_HOME__|$TARGET_HOME|g" "$SCRIPT_DIR/sleep-guard.sh" > "$BASE_SLEEP/sleep-guard.sh"
+    chown root:wheel "$BASE_SLEEP/sleep-guard.sh"; chmod 755 "$BASE_SLEEP/sleep-guard.sh"
+    echo "   sleep-guard.sh -> $BASE_SLEEP"
+fi
 echo "--- 3. 权限 (全部 root 所有, 用户不可写) ---"
 chown -R root:wheel "$BASE_TUN" "$BASE_GUARD"
 chmod 755 "$BASE_TUN" "$BASE_GUARD" "$BASE_TUN/rules"
@@ -80,7 +88,7 @@ xattr -dr com.apple.quarantine "$BASE_TUN" "$BASE_GUARD" 2>/dev/null || true
 
 # ---------- 4. 安装 launchd 定义 ----------
 echo "--- 4. 安装 LaunchDaemon / LaunchAgent ---"
-for p in com.local.v2rayn-tun com.local.v2rayn-dnsguard; do
+for p in com.local.v2rayn-tun com.local.v2rayn-dnsguard com.local.v2rayn-sleepguard; do
     cp "$SKILL_DIR/assets/$p.plist" "$LAUNCHD/$p.plist"
     chown root:wheel "$LAUNCHD/$p.plist"; chmod 644 "$LAUNCHD/$p.plist"
 done
@@ -98,7 +106,7 @@ chmod 644 /var/log/v2rayn-*.log 2>/dev/null
 
 # ---------- 6. 加载 ----------
 echo "--- 5. 加载守护进程 ---"
-SERVICES="com.local.v2rayn-tun com.local.v2rayn-dnsguard"
+SERVICES="com.local.v2rayn-tun com.local.v2rayn-dnsguard com.local.v2rayn-sleepguard"
 
 # 先全部 bootout。注意: bootout 是异步的, 旧实例(含其子进程)需要时间退出,
 # 若立刻 bootstrap 会失败并报 "Bootstrap failed: 5: Input/output error"。
@@ -167,7 +175,7 @@ else
 fi
 
 LOADED_OK=1
-for p in com.local.v2rayn-tun com.local.v2rayn-dnsguard; do
+for p in com.local.v2rayn-tun com.local.v2rayn-dnsguard com.local.v2rayn-sleepguard; do
     st=$(launchctl print "system/$p" 2>/dev/null | grep -o 'state = [a-z ]*' | head -1)
     if [ -z "$st" ]; then
         printf "   %-28s ❌ 未加载\n" "$p"
@@ -194,3 +202,16 @@ echo "   日志:   /var/log/v2rayn-tun.log   /var/log/v2rayn-dnsguard.log"
 echo "   开关:   touch \"$TARGET_HOME/Library/Application Support/v2rayN/tun-disabled\"    # 临时关 TUN"
 echo "           echo 1500 > \"$TARGET_HOME/Library/Application Support/v2rayN/tun-mtu\"   # 临时改 MTU"
 echo "   卸载:   sudo $SCRIPT_DIR/uninstall-tun.sh"
+
+# ---- Cmd+Q 误退出保护 (可选, 需要 swiftc) ----
+# 它需要【辅助功能】权限, 且必须用固定证书签名, 否则每次重编译都会让授权失效。
+# 完整流程(含自签名证书准备)在仓库根目录的 install.sh 里, 这里不重复实现:
+#   ./scripts/setup-signing-cert.sh    # 一次性准备证书
+#   ./install.sh                       # 会编译+签名+安装 LaunchAgent
+if [ -f "$SCRIPT_DIR/quit-guard.swift" ]; then
+    echo
+    echo "--- 提示: Cmd+Q 误退出保护需要额外步骤 ---"
+    echo "    它靠 CGEventTap 拦截按键, 需要辅助功能权限; 且二进制必须用固定"
+    echo "    证书签名(TCC 授权绑证书而非 CDHash), 否则每次重编译都要重新授权。"
+    echo "    请改用仓库根目录的 ./install.sh 完成这部分安装。"
+fi

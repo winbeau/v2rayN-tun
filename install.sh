@@ -219,7 +219,8 @@ echo "   LaunchAgent: v2rayN-LaunchAgent / com.local.v2rayn-quitguard"
 
 # ---------- 5. 日志文件 ----------
 touch /var/log/v2rayn-tun.log /var/log/v2rayn-tun.out.log /var/log/v2rayn-tun.err.log \
-      /var/log/v2rayn-dnsguard.log /var/log/v2rayn-dnsguard.out.log /var/log/v2rayn-dnsguard.err.log
+      /var/log/v2rayn-dnsguard.log /var/log/v2rayn-dnsguard.out.log /var/log/v2rayn-dnsguard.err.log \
+      /var/log/v2rayn-sleepguard.log /var/log/v2rayn-sleepguard.out.log /var/log/v2rayn-sleepguard.err.log
 chown root:wheel /var/log/v2rayn-*.log 2>/dev/null
 chmod 644 /var/log/v2rayn-*.log 2>/dev/null
 

@@ -47,6 +47,14 @@ v2rayn_alive() {
     /usr/bin/pgrep -x v2rayN >/dev/null 2>&1
 }
 
+# sing-box 是否真的还活着。
+# ⚠️ 不能只看 $SB_PID 非空 —— 进程可能已经崩了而变量还留着。
+#    在 kill-switch 分支里这个区别是致命的: 以为"TUN 保持中", 实际接口早没了,
+#    路由已经回到直连, 代理又不可用 —— 正好是最危险的组合。
+sb_alive() {
+    [ -n "$SB_PID" ] && kill -0 "$SB_PID" 2>/dev/null
+}
+
 proxy_up() {
     /usr/bin/nc -z -w 2 127.0.0.1 "$PROXY_PORT" >/dev/null 2>&1
 }
@@ -131,10 +139,10 @@ while true; do
 
     # ---- 自动模式: 代理就绪才建 TUN ----
     if proxy_up; then
-        if [ -z "$SB_PID" ] || ! kill -0 "$SB_PID" 2>/dev/null; then
+        if ! sb_alive; then
             start_tun
             sleep 3
-            if ! kill -0 "$SB_PID" 2>/dev/null; then
+            if ! sb_alive; then
                 log "sing-box 立即退出, 请检查上方错误输出"
                 SB_PID=""
                 sleep 10
@@ -157,18 +165,32 @@ while true; do
         #
         # 这样"任何意外都不漏真实 IP"和"退出即干净"两个需求同时满足。
         if [ -e "$KILLSWITCH_FLAG" ] || v2rayn_alive; then
-            if [ -n "$SB_PID" ]; then
+            if sb_alive; then
                 NOW=$(/bin/date +%s)
                 if [ -z "$DOWN_SINCE" ]; then
                     DOWN_SINCE=$NOW
                     log "代理端口 $PROXY_PORT 已下线, 但 v2rayN 仍在运行 -> 保持 TUN (kill-switch: 国外连接会失败而非泄漏真实 IP)"
                 fi
+            else
+                # sing-box 崩了 —— 这时 TUN 接口其实已经没了, 路由回到直连,
+                # 而代理又不可用, 正好是最危险的组合。
+                # 必须立刻把它拉起来, 否则 kill-switch 形同虚设。
+                log "⚠ 代理不可用且 sing-box 已死 -> 重建 TUN 以维持 kill-switch"
+                SB_PID=""
+                start_tun
+                sleep 3
+                if ! sb_alive; then
+                    log "❌ 重建 sing-box 失败, kill-switch 暂时失效"
+                    SB_PID=""
+                    sleep 10
+                fi
             fi
         else
-            if [ -n "$SB_PID" ]; then
+            if sb_alive; then
                 log "v2rayN 已退出, 撤掉 TUN (干净退出)"
                 stop_tun
             fi
+            SB_PID=""
             DOWN_SINCE=""
         fi
     fi
