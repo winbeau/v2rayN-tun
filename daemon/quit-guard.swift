@@ -213,7 +213,7 @@ final class Overlay {
     func show(apps: [String]) {
         if !built { build() }
         started = Date()
-        let appText = apps.isEmpty ? "（无）" : apps.joined(separator: "、")
+        let appText = apps.isEmpty ? "（当前无已知应用，仍会拦截）" : apps.joined(separator: "、")
 
         for win in windows {
             guard let root = win.contentView else { continue }
@@ -305,9 +305,14 @@ final class Guard {
     }
 
     /// Cmd+Q(keyDown)。返回 true 表示放行, false 表示吞掉。
+    ///
+    /// 注意: 这里【不再判断"有没有受保护进程在跑"】。
+    /// 之前是"没有 Chrome/Terminal 之类在用网就放行", 但那会带来一个额外的
+    /// 失效点, 而且行为不好预测 —— 用户不知道这一次按下去会不会被拦。
+    /// 现在改成: 只要 v2rayN 在前台, 【任何情况都拦截】。
+    /// protectedApps() 仍然会调用, 但只用于弹窗里显示, 不参与判断。
     func keyDown() -> Bool {
         if FileManager.default.fileExists(atPath: allowFlag) { return true }
-        if protectedApps().isEmpty { return true }
 
         if !holding {
             holding = true
@@ -390,12 +395,17 @@ let mask = (1 << CGEventType.keyDown.rawValue)
          | (1 << CGEventType.keyUp.rawValue)
          | (1 << CGEventType.flagsChanged.rawValue)
 
-guard let tap = CGEvent.tapCreate(
-    tap: .cgSessionEventTap,
-    place: .headInsertEventTap,
-    options: .defaultTap,
-    eventsOfInterest: CGEventMask(mask),
-    callback: { _, type, event, _ -> Unmanaged<CGEvent>? in
+/// 创建 event tap。抽成函数是因为 sleep/wake 之后 tap 会失效, 需要重建。
+func createTap() -> CFMachPort? {
+    let mask = (1 << CGEventType.keyDown.rawValue)
+             | (1 << CGEventType.keyUp.rawValue)
+             | (1 << CGEventType.flagsChanged.rawValue)
+    return CGEvent.tapCreate(
+        tap: .cgSessionEventTap,
+        place: .headInsertEventTap,
+        options: .defaultTap,
+        eventsOfInterest: CGEventMask(mask),
+callback: { _, type, event, _ -> Unmanaged<CGEvent>? in
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             if let t = globalTap { CGEvent.tapEnable(tap: t, enable: true) }
             log("event tap 被系统禁用, 已重新启用")
@@ -414,9 +424,17 @@ guard let tap = CGEvent.tapCreate(
         let keycode = event.getIntegerValueField(.keyboardEventKeycode)
         guard keycode == KEYCODE_Q else { return Unmanaged.passUnretained(event) }
 
+        // 诊断: 记录看到的每一个 Cmd+Q 以及当时的前台应用。
+        // 排查"tap 活着但拦不到"时这行是关键 —— 它能区分
+        // "事件根本没到回调" 和 "到了但前台判断没过"。
+        let front = NSWorkspace.shared.frontmostApplication
+        let frontID = front?.bundleIdentifier ?? "(未知)"
+        if type == .keyDown {
+            log("看到 Cmd+Q, 前台 = \(frontID)")
+        }
+
         // 只在 v2rayN 是前台应用时管。别的应用按 Cmd+Q 完全不受影响。
-        guard let front = NSWorkspace.shared.frontmostApplication,
-              front.bundleIdentifier == V2RAYN_BUNDLE_ID else {
+        guard frontID == V2RAYN_BUNDLE_ID else {
             return Unmanaged.passUnretained(event)
         }
 
@@ -432,20 +450,70 @@ guard let tap = CGEvent.tapCreate(
         }
         return Unmanaged.passUnretained(event)
     },
-    userInfo: nil
-) else {
-    // 权限显示有、但 event tap 建不起来 —— 通常是 TCC 里那条记录的 CDHash
-    // 和当前二进制对不上(例如刚换过二进制)。静默退出, 不弹窗、不空转。
-    log("❌ 无法创建 event tap —— TCC 记录可能与当前二进制不匹配。")
-    log("   请到「系统设置 → 隐私与安全性 → 辅助功能」里删掉 quit-guard 条目后重新添加:")
-    log("   /usr/local/libexec/v2rayn-tun/quit-guard")
-    exit(3)
+            userInfo: nil
+    )
 }
 
-globalTap = tap
-let src = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-CFRunLoopAddSource(CFRunLoopGetCurrent(), src, .commonModes)
-CGEvent.tapEnable(tap: tap, enable: true)
+/// 安装 tap 到当前 run loop
+func installTap(_ tap: CFMachPort) {
+    let src = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+    CFRunLoopAddSource(CFRunLoopGetCurrent(), src, .commonModes)
+    CGEvent.tapEnable(tap: tap, enable: true)
+    globalTap = tap
+}
+
+guard let tap = createTap() else {
+    log("❌ 无法创建 event tap —— 缺少辅助功能权限, 或权限已被撤销。")
+    log("   请到「系统设置 → 隐私与安全性 → 辅助功能」里勾选本程序后重新启动。")
+    FileHandle.standardError.write("❌ 缺少辅助功能权限, 无法拦截 Cmd+Q。\n".data(using: .utf8)!)
+    exit(2)
+}
+installTap(tap)
 log("event tap 已启用: 只有 v2rayN 在前台时, 按住 Cmd+Q \(Int(HOLD_SECONDS)) 秒才退出")
+
+// ---------------- tap 健康监控 ----------------
+//
+// ⚠️ CGEventTap 在系统【休眠/唤醒】之后会失效 —— 而进程还活着, 看起来一切正常,
+//    但实际上什么都拦不到。本项目的实测: 拦截器在 2026-10-12 06:08 启用,
+//    之后机器休眠了多次, 到第二天 Cmd+Q 就完全没被拦截 —— 日志里 17 小时
+//    零记录, 极难发现。
+//
+// 两道保险:
+//   1. 收到系统唤醒通知 -> 重建 tap
+//   2. 每 20 秒用 CGEvent.tapIsEnabled 自检 -> 失效就重新启用/重建
+
+func rebuildTap(reason: String) {
+    if let old = globalTap { CGEvent.tapEnable(tap: old, enable: false) }
+    globalTap = nil
+    guard let fresh = createTap() else {
+        log("⚠ \(reason): 重建 event tap 失败 (权限可能被撤销)")
+        return
+    }
+    installTap(fresh)
+    log("\(reason): event tap 已重建")
+}
+
+NSWorkspace.shared.notificationCenter.addObserver(
+    forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+) { _ in
+    log("检测到系统唤醒 (didWake)")
+    rebuildTap(reason: "唤醒后")
+}
+
+let health = Timer(timeInterval: 20, repeats: true) { _ in
+    guard let t = globalTap else {
+        rebuildTap(reason: "tap 丢失")
+        return
+    }
+    if !CGEvent.tapIsEnabled(tap: t) {
+        CGEvent.tapEnable(tap: t, enable: true)
+        if !CGEvent.tapIsEnabled(tap: t) {
+            rebuildTap(reason: "tap 被系统禁用且无法重新启用")
+        } else {
+            log("tap 曾被禁用, 已重新启用")
+        }
+    }
+}
+RunLoop.current.add(health, forMode: .common)
 
 app.run()
