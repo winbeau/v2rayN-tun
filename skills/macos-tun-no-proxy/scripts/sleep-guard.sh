@@ -26,7 +26,7 @@
 
 set -u
 
-SLEEP_DISABLE_THRESHOLD=1200   # 默认 20 分钟。合盖空闲超过它就放开睡眠。
+SLEEP_DISABLE_THRESHOLD=2400   # 默认 40 分钟。合盖空闲超过它就放开睡眠。
 POLL=60                        # 检查间隔(秒)
 LOG=/var/log/v2rayn-sleepguard.log
 TIMEOUT_FLAG="__USER_HOME__/Library/Application Support/v2rayN/no-sleep-timeout"

@@ -29,16 +29,23 @@ RUN_CONF="$BASE/config.run.json"
 PROXY_PORT=10808
 LOG=/var/log/v2rayn-tun.log
 POLL=5
-# 代理掉线后等多久才撤 TUN (秒)。纯粹是防抖: 给 v2rayN 崩溃后自动重启留个窗口。
-# 误按 Cmd+Q 已由 quit-guard 在按键层拦下, v2rayN 根本不会退出, 不依赖这里。
-# 不能设太长: 这段窗口内流量进 TUN 却没有出口, 等于断网。
-GRACE=8
+# kill-switch 开关文件。存在时强制保持 TUN (即使 v2rayN 已退出也不撤)。
+# 平时不需要它 —— 默认行为就是: v2rayN 在就保 TUN, v2rayN 走了才撤。
+KS_FLAG="__USER_HOME__/Library/Application Support/v2rayN/killswitch-always"
 
 # __USER_HOME__ 由 install.sh 在安装时替换为实际用户主目录
 FLAG="__USER_HOME__/Library/Application Support/v2rayN/tun-disabled"
 MTU_FLAG="__USER_HOME__/Library/Application Support/v2rayN/tun-mtu"
 
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >>"$LOG"; }
+
+# 用户主动创建的"始终开启 kill-switch"开关
+KILLSWITCH_FLAG="$KS_FLAG"
+
+# v2rayN 进程是否存活 —— 用来区分"代理暂时不可用"和"用户主动退出"
+v2rayn_alive() {
+    /usr/bin/pgrep -x v2rayN >/dev/null 2>&1
+}
 
 proxy_up() {
     /usr/bin/nc -z -w 2 127.0.0.1 "$PROXY_PORT" >/dev/null 2>&1
@@ -135,22 +142,34 @@ while true; do
         fi
         DOWN_SINCE=""
     else
-        if [ -n "$SB_PID" ]; then
-            # 宽限期: 代理刚掉线时先等一会儿再撤 TUN。
-            # 目的: 配合 quit-guard.sh —— 误按 Cmd+Q 时它会在大约 2 秒内把
-            #       v2rayN 拉回来, 只要这里还没执行 stop_tun, TUN 就从未断过,
-            #       正在进行的下载/对话不受影响。
-            # 代价: 真的要退出时, 网络会先黑洞 GRACE 秒再恢复直连。
-            #       这段窗口内流量进 TUN 后无出口, 所以不能设太长。
-            NOW=$(/bin/date +%s)
-            if [ -z "$DOWN_SINCE" ]; then
-                DOWN_SINCE=$NOW
-                log "代理端口 $PROXY_PORT 已下线, ${GRACE} 秒宽限期内等待其恢复"
-            elif [ $((NOW - DOWN_SINCE)) -ge "$GRACE" ]; then
-                log "宽限期已过 ($((NOW - DOWN_SINCE)) 秒), 撤掉 TUN 以免断网"
-                stop_tun
-                DOWN_SINCE=""
+        # 代理端口下线。分两种情况, 区别很关键:
+        #
+        #   A. v2rayN 进程还在 —— 只是代理暂时不可用(节点故障/正在重连/DNS 抖动)。
+        #      → 【保持 TUN】, 不撤。
+        #        国外流量走 proxy 出口 -> 10808 已死 -> 连接失败,
+        #        但它【绝不会】绕出去用真实 IP 直连。
+        #        国内流量走 direct 出口(sing-box 的 auto_detect_interface 让它绑
+        #        物理网卡, 不经过 TUN), 所以国内照常可用 —— 不会被卡死。
+        #        节点恢复后自动接上, 不存在死锁(xray 走 direct 出口能连到节点)。
+        #
+        #   B. v2rayN 进程已退出 —— 用户主动退出。
+        #      → 【撤掉 TUN】, 恢复直连, 系统不留任何痕迹。
+        #
+        # 这样"任何意外都不漏真实 IP"和"退出即干净"两个需求同时满足。
+        if [ -e "$KILLSWITCH_FLAG" ] || v2rayn_alive; then
+            if [ -n "$SB_PID" ]; then
+                NOW=$(/bin/date +%s)
+                if [ -z "$DOWN_SINCE" ]; then
+                    DOWN_SINCE=$NOW
+                    log "代理端口 $PROXY_PORT 已下线, 但 v2rayN 仍在运行 -> 保持 TUN (kill-switch: 国外连接会失败而非泄漏真实 IP)"
+                fi
             fi
+        else
+            if [ -n "$SB_PID" ]; then
+                log "v2rayN 已退出, 撤掉 TUN (干净退出)"
+                stop_tun
+            fi
+            DOWN_SINCE=""
         fi
     fi
     sleep "$POLL"

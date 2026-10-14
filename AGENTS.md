@@ -8,7 +8,7 @@
 | 目录 | 内容 |
 |---|---|
 | [`skills/`](skills/) | **技能包**（agent 入口）。开始相关任务前先读对应的 `SKILL.md` |
-| [`docs/`](docs/README.md) | 排查记录：12 份按主题组织的「弯路 + 解法」 |
+| [`docs/`](docs/README.md) | 排查记录：13 份按主题组织的「弯路 + 解法」 |
 | [`scripts/`](scripts/) | 服务端调优、运维工具、签名证书准备（可独立使用） |
 | `config/` `daemon/` `launchd/` | TUN 守护进程与 Cmd+Q 拦截器的安装源文件 |
 | `install.sh` `uninstall.sh` | TUN 守护进程的安装 / 卸载 |
@@ -81,6 +81,12 @@
 10. **破坏性命令要算影响面。** `tccutil reset Accessibility`（不带标识）会清掉
    **系统里所有应用**的辅助功能授权，包括终端本身 —— 一次误用就能让整机的
    自动化工具全废。能带标识就带标识；带不了就优先手动操作。
+11. **"代理断了就恢复直连"是危险的默认值。** 它的出发点是"不让用户断网"，
+   但对 Claude / ChatGPT 这类强风控服务，代价是**把真实 IP 交出去** ——
+   用户因此被封过号。对这类场景，代理不可用时的正确默认是**阻断**而不是放行。
+12. **判断代理健康不能只看端口。** 休眠时进程还在、socket 还在，但网络栈已被
+   系统拆掉。必须同时确认"接口是否真的存在"。
+13. **轮询周期就是泄漏窗口。** 30 秒轮询 = 30 秒暴露。能用事件驱动就别轮询。
 
 ## 常用命令
 
@@ -117,6 +123,7 @@ killall universalAccessAuthWarn        # 关掉卡住的授权对话框
 | [10](docs/10-reality-setup.md) | REALITY 部署踩坑全过程 |
 | [11](docs/11-hysteria2-real-cert.md) | Hysteria2 证书问题与 QUIC 的性能优势 |
 | [12](docs/12-quit-guard.md) | **Cmd+Q 拦截器的五条弯路**，含 TCC 授权的完整排查方法 |
+| [13](docs/13-ip-leak-protection.md) | **真实 IP 泄漏防护**：合盖休眠、代理掉线两条泄漏路径与 kill-switch |
 | [toolbox](docs/toolbox.md) | 命令速查 |
 
 **如果只读一份**：读 [12](docs/12-quit-guard.md)。它记录的不是某个配置怎么写，
