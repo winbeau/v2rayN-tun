@@ -197,3 +197,78 @@ plutil -lint: (Unexpected character h at line 9)
 4. **plist 写完必须 `plutil -lint`。** XML 注释里的 `--` 这种坑，不 lint 发现不了。
 5. **服务要先监听再拉数据，锁不要覆盖网络 IO。** 两个都是会让客户端"连不上"
    的经典错误，而且症状一模一样（HTTP 000）。
+
+
+## 补充：机场修好线路后，怎么确认更新真的生效了
+
+机场客服的标准话术是"修复后请在客户端右键订阅点【更新】"。但如果中间隔了
+一层缓存，用户点了更新却拿到旧节点，会误判成"更新没生效"。
+
+本项目踩到的点：`sub-server.py` 最初把缓存设成 600 秒 —— 用户点更新、
+v2rayN 打到 `/sub`，服务返回的还是 10 分钟前的数据。
+
+**改成 60 秒**：足够挡住连点，又不会让用户误判。
+
+另外 `sub-server.py` 提供 `/refresh` 强制刷新，排查时可以直接：
+
+```bash
+curl -s http://127.0.0.1:18080/refresh      # 强制拉一次
+curl -s http://127.0.0.1:18080/list | head  # 看节点 IP 有没有变
+```
+
+### v2rayN 的订阅更新流程
+
+```
+v2rayN「更新」
+  -> GET http://127.0.0.1:18080/sub
+       -> sub-server 判断缓存 (60s 内直接用缓存, 否则重拉)
+            -> GET https://<机场>/.../sub.php?t=..&s..   (Clash YAML)
+            -> 解析 -> 转 vless:// -> base64
+  -> v2rayN 解析 base64, 写入 ProfileItem (带 subid)
+```
+
+所以判断"更新是否生效"最直接的办法是看节点 IP：
+
+```bash
+sqlite3 ~/Library/Application\ Support/v2rayN/guiConfigs/guiNDB.db \
+  "select Remarks, Address from ProfileItem where Remarks like '%住宅%';"
+```
+
+## 补充：关于"链式代理"应急方案
+
+机场客服给的应急方案是：在 Clash Verge 里做链式代理，用一个能连的节点做
+前置，最终出口仍是住宅 IP。**思路是对的**，实测也能看到效果：
+
+```
+直连住宅节点:        151 秒 / 连续 6 次全部失败   ✗  (入口被阻断)
+经前置节点串过去:    6.5 秒                      ✓  (路径问题解决了)
+```
+
+**但连上之后仍然失败**：
+
+```
+REALITY: received real certificate (potential MITM or redirection)
+```
+
+这是 Reality 握手被拒的信号 —— 认证失败时服务器会把连接**转发到真实的
+`serverName`（www.cooper.edu）**，于是客户端收到真证书。
+
+**所以住宅节点不只是"入口被墙"，它自己的认证/后端也不通了。**
+链式代理只能解决"路径"，解决不了这一层。
+
+### 另外两个注意事项
+
+**1. xray 26.9.9 废弃了 `proxySettings`**
+
+```
+The feature outbound "proxySettings" has been removed and migrated to
+"streamSettings.sockopt.dialerProxy".
+```
+
+v2rayN 的「前置代理」(`PreSocksPort`) 生成的是旧语法，在这个 xray 版本上
+**会直接启动失败**。要用链式代理得先确认 v2rayN 生成的配置语法。
+
+**2. 本次没有把链式代理调通**
+
+对照组（同一节点串联自己）也失败了，说明配置方式还没配对 ——
+所以**不能断定"链式代理不行"**，只能说"我还没配对"。

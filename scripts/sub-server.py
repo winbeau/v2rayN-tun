@@ -67,7 +67,11 @@ parse_proxies = _ns["parse_proxies"]
 to_uri = _ns["to_uri"]
 
 DEFAULT_URL_FILE = os.path.expanduser("~/.v2rayn-tun/sub-url")
-CACHE_TTL = int(os.environ.get("SUB_CACHE_TTL", "600"))
+# ⚠️ 缓存要短。
+# 机场修好线路后, 客服会要求"在客户端点更新" —— 如果这里缓存太长,
+# v2rayN 点了更新却拿到旧节点, 会以为"更新没生效", 白白多等一轮。
+# 60 秒足够挡住连点, 又不会让用户误判。
+CACHE_TTL = int(os.environ.get("SUB_CACHE_TTL", "60"))
 
 # ⚠️ 锁只在读写缓存时持有, 【绝不覆盖网络请求】。
 # 早先的版本把整段 fetch 包在锁里, 结果 warmup 线程拉取期间所有 HTTP 请求
