@@ -94,10 +94,28 @@ case "${1:-status}" in
             python3 - "$CONF" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
-cn_direct = [r for r in d["route"]["rules"]
-             if r.get("outbound") == "direct"
-             and set(r.get("rule_set") or []) & {"geoip-cn", "geosite-cn"}]
-print(f"    国内直连规则: {'仍存在 -> 正常模式' if cn_direct else '已取消 -> 隐身模式'}")
+# 看国内方向(cn 规则集)被送到哪个出站
+tags = {o.get("tag") for o in d.get("outbounds", [])}
+cn_outs = set()
+for r in d["route"]["rules"]:
+    if set(r.get("rule_set") or []) & {"geoip-cn", "geosite-cn"}:
+        cn_outs.add(r.get("outbound"))
+if "cn-via-jp" in cn_outs and "cn-via-jp" in tags:
+    _mode = "cn-via-jp"     # 标准: 国内走日本
+elif "direct" in cn_outs:
+    _mode = "direct"        # 旧配置: 国内直连(泄漏)
+else:
+    _mode = "proxy"         # 隐身/严格: 全走代理
+# 三种情况要分开: cn-via-jp(标准) / direct(旧配置) / 都没有(隐身或严格)
+print(f"    国内方向出站: {_mode}")
+if _mode == "cn-via-jp":
+    print("      -> 走日本节点。这是【标准模式】, 不是隐身模式")
+    print("         国内站能开, 真实 IP 不泄漏, DNS 也不走国内")
+elif _mode == "direct":
+    print("      -> 直连！这是旧配置, 真实 IP 会泄漏")
+    print("         修: sudo ./scripts/setup-routing.sh --cn-node 日本CN2-3")
+else:
+    print("      -> 走代理。是隐身模式(--strict)或旧配置状态")
 PY
         else
             echo "    读不到 $CONF"

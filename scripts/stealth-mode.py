@@ -1,5 +1,20 @@
 #!/usr/bin/env python3
 # 生成「隐身模式」的 sing-box 配置 (所有流量走代理, 取消国内直连)
+#
+# ⚠️ 2026-10-15 之后的架构下, 这个工具的用途已经变了 ——
+#
+#   现在默认配置里【已经没有 "国内直连"】了:
+#     国内方向 -> cn-via-jp (日本节点)   ← 不是 direct, 也不泄漏
+#     例外域名 -> direct                 ← 22 个只认国内 IP 的站点
+#
+#   所以:
+#     · 它不再需要用来"堵国内直连" —— 那是 cn-via-jp 干的事
+#     · 它现在唯一的用途是"连那 22 个例外也不许直连"(极端严格场景)
+#       —— 代价是微信发不出图片、教育网和政务站打不开
+#     · 它【不会】动 cn-via-jp, 那是另一条出站, 不是 direct
+#
+#   想恢复标准的"少数直连 + 国内走日本 + 国外走住宅":
+#     ./scripts/setup-routing.sh --cn-node 日本CN2-3
 """
 隐身模式 —— 让【所有】流量都走代理, 不再有"国内直连"。
 
@@ -76,16 +91,36 @@ KEEP_DIRECT_KEYS = {
 KEEP_DIRECT_RULE_SETS = {"geosite-private"}   # 私有/本地域名
 
 
-def _must_keep_direct(rule):
+# 只认国内 IP、经境外节点必然失败的域名。隐身模式默认【保留】它们的直连,
+# 否则微信发不出图片、教育网和政务站打不开。要连它们也一起代理, 用 --strict。
+KEEP_DIRECT_DOMAINS = [
+    "qq.com", "weixin.qq.com", "qpic.cn", "qlogo.cn", "gtimg.cn",
+    "tencent.com", "myqcloud.com", "wechatpay.cn",
+    "edu.cn", "ac.cn", "chsi.com.cn", "gov.cn", "gov.hk",
+]
+
+
+def _is_domestic_only(rule):
+    """这条规则是不是"只认国内 IP"的例外域名"""
+    ds = rule.get("domain_suffix") or []
+    if not isinstance(ds, list):
+        return False
+    return any(d == k or d.endswith("." + k) for d in ds for k in KEEP_DIRECT_DOMAINS)
+
+
+def _must_keep_direct(rule, strict=False):
+    # 路由环路 / 局域网 / 本地域名 —— 无论如何都要保留
     if any(k in rule for k in KEEP_DIRECT_KEYS):
         return True
-    rs = rule.get("rule_set") or []
-    if set(rs) & KEEP_DIRECT_RULE_SETS:
+    if set(rule.get("rule_set") or []) & KEEP_DIRECT_RULE_SETS:
+        return True
+    # "只认国内 IP"的例外: 默认保留, --strict 时连它们也代理
+    if not strict and _is_domestic_only(rule):
         return True
     return False
 
 
-def build_stealth(cfg):
+def build_stealth(cfg, strict=False):
     """返回一份把"直连例外"全部改成走代理的配置 (深拷贝)"""
     out = json.loads(json.dumps(cfg))
     changed = []
@@ -94,7 +129,7 @@ def build_stealth(cfg):
     for i, rule in enumerate(out.get("route", {}).get("rules", [])):
         if rule.get("outbound") != "direct":
             continue
-        if _must_keep_direct(rule):
+        if _must_keep_direct(rule, strict):
             continue
         desc = rule.get("rule_set") or rule.get("domain_suffix") or rule.get("ip_cidr") or "?"
         rule["outbound"] = "proxy"
@@ -128,10 +163,13 @@ def main():
     ap.add_argument("action", choices=["generate", "diff"],
                     help="generate=输出配置; diff=只显示会改哪些规则")
     ap.add_argument("-o", "--output", help="输出文件 (默认 stdout)")
+    ap.add_argument("--strict", action="store_true",
+                    help="连「只认国内 IP」的例外域名(微信/教育/政务)也一起走代理。"
+                         "默认保留它们, 否则微信发不出图片")
     args = ap.parse_args()
 
     cfg = load()
-    stealth, changed = build_stealth(cfg)
+    stealth, changed = build_stealth(cfg, strict=args.strict)
 
     if args.action == "diff":
         print(f"共 {len(changed)} 处改动:")
@@ -145,10 +183,14 @@ def main():
         # 保留的 direct 应当只剩 private / 保留地址
         left = [r for r in stealth["route"]["rules"] if r.get("outbound") == "direct"]
         print()
-        print("隐身模式下仍走 direct 的规则 (应当只剩: 自身豁免 / 局域网 / 手动模式):")
+        print("隐身模式下仍走 direct 的规则:")
         for r in left:
-            keys = {k: v for k, v in r.items() if k != "outbound"}
-            print(f"  {json.dumps(keys, ensure_ascii=False)[:90]}")
+            if _is_domestic_only(r):
+                print(f"  ★ 例外域名 ({len(r['domain_suffix'])} 个) —— 默认保留,"
+                      f" 加 --strict 可连它们也代理 (但微信会发不出图片)")
+            else:
+                keys = {k: v for k, v in r.items() if k != "outbound"}
+                print(f"  保留 {json.dumps(keys, ensure_ascii=False)[:88]}")
         return
 
     text = json.dumps(stealth, ensure_ascii=False, indent=2)
