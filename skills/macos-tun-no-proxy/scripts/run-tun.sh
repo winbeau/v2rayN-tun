@@ -1,5 +1,5 @@
 #!/bin/bash
-#
+# v2rayN TUN 守护 (root): 建/撤 TUN、kill-switch、地址变化重建
 # v2rayN TUN 守护包装脚本 (root)
 #
 # 架构:  sing-box TUN (root) --> socks --> 127.0.0.1:10808 --> xray (v2rayN) --> 节点

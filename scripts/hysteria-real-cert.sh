@@ -1,5 +1,5 @@
 #!/bin/bash
-#
+# 为 Hysteria2 申请并安装 Let's Encrypt 真证书
 # 为 Hysteria2 申请并安装 Let's Encrypt 真证书
 #
 # 背景: Hysteria2 走 QUIC/UDP, 无法像 WS+TLS 那样躲在 Cloudflare 后面,

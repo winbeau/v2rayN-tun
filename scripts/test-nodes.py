@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# 逐个实测节点可用性 (独立 xray, 不干扰 v2rayN)
 """
 逐个测试节点是否真的能通 —— 用独立 xray 实例, 不干扰 v2rayN。
 

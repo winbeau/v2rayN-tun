@@ -145,24 +145,10 @@ killall universalAccessAuthWarn        # 关掉卡住的授权对话框
 技能是从那份实战记录提炼的压缩版，`docs/` 保留了三倍的上下文，
 包括每次误判的完整推理过程 —— 排查没思路时，误判的模式比结论更有用。
 
-| 文档 | 内容 |
-|---|---|
-| [04](docs/04-network-switch-bugs.md) | 切网后的两个真实 bug（最难查的部分） |
-| [09](docs/09-vps-tuning.md) | VPS 内核调优与 Cloudflare 优选 IP |
-| [10](docs/10-reality-setup.md) | REALITY 部署踩坑全过程 |
-| [11](docs/11-hysteria2-real-cert.md) | Hysteria2 证书问题与 QUIC 的性能优势 |
-| [12](docs/12-quit-guard.md) | **Cmd+Q 拦截器的五条弯路**，含 TCC 授权的完整排查方法 |
-| [13](docs/13-ip-leak-protection.md) | **真实 IP 泄漏防护**：合盖休眠、代理掉线两条泄漏路径与 kill-switch |
-| [14](docs/14-node-sni-blocking.md) | **商业节点按 SNI 屏蔽**：分 IP/域名的排查法 + DNS/路由必须同改 |
-| [15](docs/15-clash-sub-to-v2rayn.md) | **Clash 订阅 → v2rayN 自动更新**：本地转换服务 + 三个必踩的坑 |
-| [16](docs/16-cn-direct-ip-leak.md) | **国内直连泄漏真实 IP**：两层规则 + 按进程豁免 + 定位方法 |
-| [17](docs/17-claude-ban-detection-analysis.md) | **封号检测调研**：证伪一个流行说法 + 环境一致性清单 |
-| [toolbox](docs/toolbox.md) | 命令速查 |
+> 完整清单见 [docs/README.md](docs/README.md) —— 每篇都有一句话概述。
+> **如果只读一份**：读 [12 Cmd+Q 拦截器](docs/12-quit-guard.md)。它记录的不是某个
+> 配置怎么写，而是"前提假设错了，实现再漂亮也没用"这个模式。
 
-**如果只读一份**：读 [12](docs/12-quit-guard.md)。它记录的不是某个配置怎么写，
-而是**一个功能被推倒重做三次的完整过程** —— 每次都是因为一个更基础的前提假设错了
-（"拦不住 Cmd+Q"、"回调里可以等"、"重编译不影响授权"），而每次错误都让用户
-白做了一轮授权。这类"前提错误"的模式比任何具体解法都更值得记住。
 
 ## 维护提示
 

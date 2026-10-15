@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# 给 VPS 的 Xray 增加一条 Reality 入站
 """
 给一台 xray 服务器增加 VLESS + Reality + XTLS-Vision 入站, 并接入 v2rayN。
 

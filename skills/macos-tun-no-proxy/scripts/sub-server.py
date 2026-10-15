@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# 本地订阅转换服务: 把 Clash 订阅暴露成 v2rayN 能订阅的 URL
 """
 本地订阅转换服务 —— 让 v2rayN 能"订阅"一个只提供 Clash 格式的机场。
 

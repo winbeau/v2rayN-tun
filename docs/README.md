@@ -2,93 +2,28 @@
 
 本项目从「v2rayN 打不开」一路做到「TUN 模式托管」的全部排查记录。
 
-记录的重点是**走过的弯路** —— 每份文档都写明「当时怎么想的、为什么错、怎么纠正」。
-结论会过时，误判的模式不会。
+记录重点是**走过的弯路**：每篇写明「当时怎么想的、为什么错、怎么纠正」。结论会过时，误判的模式不会。
 
----
+> 看整体逻辑先读 [00 整体架构](00-architecture.md)。
 
-## 索引
-
-| # | 主题 | 一句话 |
+| # | 主题 | 一句话（教训）|
 |---|---|---|
-| [01](01-gatekeeper.md) | v2rayN 报「已损坏」 | 隔离标记与签名损坏是**两个独立问题**，只修一个不够 |
-| [02](02-dock-and-passwordless-tun.md) | Dock 常驻 + TUN 免密 | v2rayN 把「每次必须输密码」写死在源码里；改用独立 root 守护进程 |
-| [03](03-login-item-ipv6-dns.md) | 登录项 / 假 IPv6 / DNS 污染 | `hijack-dns` 拦不住**同网段**的 DNS |
-| [04](04-network-switch-bugs.md) | **网络切换的两个 bug** ⭐ | 长驻进程"启动时探测一次" = 定时炸弹 |
-| [05](05-wechat-lag.md) | 微信卡顿（三次错误结论）| 空日志 ≠ 没有事件 |
-| [06](06-github-slow.md) | GitHub 慢 | 延迟与吞吐要分开查；含一次把服务搞断的失误 |
-| [07](07-repo-and-bootout-race.md) | 建仓与 bootout 竞态 | `launchctl` 的 bootout/bootstrap 不是同步的 |
-| [08](08-node-failure-triage.md) | **节点故障分层定位** ⭐ | 先证明问题不在本地，再往外查 |
-| [09](09-vps-tuning.md) | **VPS 调优与 Cloudflare 优选 IP** ⭐ | CDN 前置的节点，故障点可能在 CDN |
-| [10](10-reality-setup.md) | **启用 Reality + XTLS-Vision** ⭐ | 旧配置的 `dest` 已被静默改名为 `target` |
-| [11](11-hysteria2-real-cert.md) | **修复 Hysteria2（换真证书）** ⭐ | QUIC 无法躲在 CDN 后面；TCP-in-TCP 是隐形税 |
-| [12](12-quit-guard.md) | **Cmd+Q 保护（五条弯路）** ⭐⭐ | 三次推倒重做；前提假设错比实现错更致命 |
-| [13](13-ip-leak-protection.md) | **真实 IP 泄漏防护** ⭐⭐⭐ | 代理断了就恢复直连，是危险默认值 |
-| [14](14-node-sni-blocking.md) | **商业节点按 SNI 选择性屏蔽** ⭐⭐ | 「节点只是中转」是错误的心智模型 |
-| [15](15-clash-sub-to-v2rayn.md) | **Clash 订阅转 v2rayN + 自动更新** ⭐⭐ | 「粘贴节点」和「订阅」是两种东西 |
-| [16](16-cn-direct-ip-leak.md) | **国内直连泄漏真实 IP（两层规则）** ⭐⭐⭐ | 改一层没用；进程匹配要写真正发起连接的那个 |
-| [17](17-claude-ban-detection-analysis.md) | **Claude 封号检测调研（含一次证伪）** ⭐⭐⭐ | 细节的具体程度不是可信度；风控看"矛盾"不看"伪装" |
-| [toolbox](toolbox.md) | **排查命令速查** ⭐ | 本项目真正用上的技巧 |
+| [01](01-gatekeeper.md) | v2rayN 报「已损坏，应移到废纸篓」 | 隔离标记与签名损坏是**两个独立问题**，只修一个不够。 |
+| [02](02-dock-and-passwordless-tun.md) | Dock 常驻 + TUN 免密 | v2rayN 把「每次必须输密码」写死在源码里 —— 改用独立 root 守护进程绕开。 |
+| [03](03-login-item-ipv6-dns.md) | 登录项 + 假 IPv6 + DNS 污染 | `hijack-dns` 拦不住**同网段**的 DNS；假 IPv6 会把它引到错误的解析器。 |
+| [04](04-network-switch-bugs.md) | 网络切换引发的两个真实 bug | 长驻进程「启动时探测一次」= 定时炸弹；`stop_tun` 里的 kickstart 会造成无限重建。 |
+| [05](05-wechat-lag.md) | 微信卡顿排查（三次错误结论） | **空日志 ≠ 没有事件** —— 三次错误结论都源于此。 |
+| [06](06-github-slow.md) | GitHub 访问慢（含一次把服务搞断的失误） | 延迟与吞吐要分开查；本文含一次把服务搞断的失误。 |
+| [07](07-repo-and-bootout-race.md) | 建仓与 install.sh 的 bootout 竞态 | `launchctl` 的 `bootout`/`bootstrap` **不是同步的**。 |
+| [08](08-node-failure-triage.md) | 节点故障的分层定位 | 先证明问题不在本地，再往外查 —— 端口 → TUN → DNS → 节点。 |
+| [09](09-vps-tuning.md) | VPS 服务端调优与 Cloudflare 优选 IP | CDN 前置的节点，故障点可能在 CDN 而不在 VPS。 |
+| [10](10-reality-setup.md) | 在自建服务器上启用 Reality + XTLS-Vision | 旧配置的 `dest` 已被**静默改名**为 `target`。 |
+| [11](11-hysteria2-real-cert.md) | 修复 Hysteria2 节点（换真实证书） | QUIC 无法躲在 CDN 后面；TCP-in-TCP 是隐形税。 |
+| [12](12-quit-guard.md) | 误按 Cmd+Q 保护（quit-guard） | 三次推倒重做，每次都因为一个更基础的前提假设错了 —— 前提错比实现错更致命。 |
+| [13](13-ip-leak-protection.md) | 真实 IP 泄漏防护 | **「代理断了就恢复直连」是危险的默认值** —— 对强风控服务，默认应是阻断。 |
+| [14](14-node-sni-blocking.md) | 商业节点会按 SNI 选择性屏蔽 | **「节点只是中转」是错误的心智模型** —— 商业节点会按 SNI 屏蔽。 |
+| [15](15-clash-sub-to-v2rayn.md) | 机场只给 Clash 订阅，怎么让 v2rayN 自动更新 | **「粘贴节点」和「订阅」是两种东西** —— 前者一次性，后者才会更新。 |
+| [16](16-cn-direct-ip-leak.md) | 国内直连导致的真实 IP 泄漏（两层规则 + 按进程豁免） | **这个项目有两层国内直连规则**，只改一层，泄漏纹丝不动。 |
+| [17](17-claude-ban-detection-analysis.md) | Claude 封号检测机制调研（含一次证伪） | **细节的具体程度不是可信度** —— 风控看的是「矛盾」，不是「伪装」。 |
 
----
-
-## 时间线
-
-```
-① v2rayN 打不开 ──────────── Gatekeeper：隔离标记 + 签名损坏
-② Dock 常驻 + TUN 免密 ───── 读源码发现 v2rayN 的设计限制 → 独立 root 守护进程
-③ 登录项 + 假 IPv6 ───────── on-link DNS 绕过 TUN；连带发现 IPv6 完全泄漏
-④ 网络切换（DNS 回落）────── 网络守护：WatchPaths + 因果判定
-⑤ 微信卡顿 ──────────────── 三次误判后定位到时间对齐
-⑥ DSH 反复报错 ──────────── 解码 zstd 会话日志 → 发现绑定失效（Bug B）
-⑦ MTU / 系统栈 / QUIC ───── 参数优化（非主因，但确实该做）
-⑧ GitHub 慢 ─────────────── 确认是物理距离，配置已最优
-⑨ 建仓 + git ────────────── 路径参数化；修掉 install.sh 的加载竞态
-⑩ 节点集体失效 ──────────── 分层定位；节点名不副实；换节点踩 DNS 死锁
-⑪ VPS 调优 ──────────────── BBR 模块未加载；Cloudflare 优选 IP 修复
-⑫ Reality 接入 ──────────── dest→target 静默改名；target 必须实测
-⑬ Hysteria2 修复 ────────── Cloudflare 源站证书不可信 → Let's Encrypt；
-                            换 QUIC 承载后延迟快 5-6 倍（TCP-in-TCP 的代价）
-```
-
----
-
-## 最值得记住的五条
-
-1. **空日志有两种含义**：「没有事件」和「没有在记」。
-   我曾用"xray 日志里没有微信流量"推断"没走代理"，而 xray 的访问日志根本没开（`loglevel: warning`）。
-
-2. **单次快照不能证明"不存在"。**
-   我据一次采样断言"微信没有长连接"，监控 90 秒后发现长连接一直稳定存活。
-
-3. **故障是间歇的，就必须在故障发生时取数。**
-   我测到"绑定是正确的"就结案，但那一刻网络刚切换完、守护已重启 —— 事后测到的"正常"会误导你。
-
-4. **用户的体感描述是一手数据，优先级高于推断。**
-   我说过两次"已排除"，都是错的。用户那句「是不是你网络切换时候没有切换干净」直接指向了真因。
-
-5. **根因未明时不要改参数。**
-   先后调过 QUIC 规则、MTU、连接超时 —— 都是"看起来合理"的改动，但没解决主诉，反而把多个变量搅在一起。
-
----
-
-## 两个真实 bug 的速查
-
-排查网络问题时，先跑这两条：
-
-```bash
-# Bug A: DNS 是否回落到 on-link（绕过 TUN）
-scutil --dns | grep nameserver      # 有同网段地址就是中招
-
-# Bug B: sing-box 出站绑定是否失效
-ifconfig en0 | awk '/inet /{print $2}'                                  # en0 实际地址
-grep "can't assign requested address" /var/log/v2rayn-tun.log           # 有输出就是中招
-```
-
-两项的健康状态应该都是空的/一致的。修复通常只需重启 TUN：
-
-```bash
-sudo launchctl kickstart -k system/com.local.v2rayn-tun
-```
-
-（正常情况网络守护会在 11 秒内自动处理。）
+另见 [toolbox](toolbox.md) —— 实际定位问题时用过的命令。

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# 把 Clash 订阅 (YAML) 转成 v2rayN 可导入的节点链接
 """
 把 Clash 订阅 (Clash YAML) 转成 v2rayN 能直接导入的格式。
 

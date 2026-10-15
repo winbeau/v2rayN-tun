@@ -1,5 +1,7 @@
 # 03 · 登录项 + 假 IPv6 + DNS 污染
 
+> **一句话**：`hijack-dns` 拦不住**同网段**的 DNS；假 IPv6 会把它引到错误的解析器。
+
 ## 3.1 登录项：光改配置不够
 
 v2rayN 的 `GuiItem.AutoRun` 用 **LaunchAgent** 实现（`AutoStartupHandler.SetTaskOSX()`），写到 `~/Library/LaunchAgents/v2rayN-LaunchAgent.plist`。

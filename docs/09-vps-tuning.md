@@ -1,5 +1,7 @@
 # 09 · VPS 服务端调优与 Cloudflare 优选 IP
 
+> **一句话**：CDN 前置的节点，故障点可能在 CDN 而不在 VPS。
+
 对象：两台自建节点服务器
 - `198.51.100.20` — VLESS+Reality:443（XTLS-Vision）/ VLESS+WS:8443 / VMess:2053 / Hysteria2:443
 - `198.51.100.10` — VLESS+WS:443 / Hysteria2:443，域名 `hk.example.net` 走 Cloudflare

@@ -1,5 +1,7 @@
 # 07 · 建仓与 install.sh 的 bootout 竞态
 
+> **一句话**：`launchctl` 的 `bootout`/`bootstrap` **不是同步的**。
+
 ## 建仓时做的两件事
 
 ### 1. 路径参数化

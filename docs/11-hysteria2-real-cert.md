@@ -1,5 +1,7 @@
 # 11 · 修复 Hysteria2 节点（换真实证书）
 
+> **一句话**：QUIC 无法躲在 CDN 后面；TCP-in-TCP 是隐形税。
+
 **现象**：`selab-hy2` 节点无法连接，v2rayN 日志报：
 
 ```
