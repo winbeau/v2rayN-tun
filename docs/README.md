@@ -24,6 +24,7 @@
 | [11](11-hysteria2-real-cert.md) | **修复 Hysteria2（换真证书）** ⭐ | QUIC 无法躲在 CDN 后面；TCP-in-TCP 是隐形税 |
 | [12](12-quit-guard.md) | **Cmd+Q 保护（五条弯路）** ⭐⭐ | 三次推倒重做；前提假设错比实现错更致命 |
 | [13](13-ip-leak-protection.md) | **真实 IP 泄漏防护** ⭐⭐⭐ | 代理断了就恢复直连，是危险默认值 |
+| [14](14-node-sni-blocking.md) | **商业节点按 SNI 选择性屏蔽** ⭐⭐ | 「节点只是中转」是错误的心智模型 |
 | [toolbox](toolbox.md) | **排查命令速查** ⭐ | 本项目真正用上的技巧 |
 
 ---

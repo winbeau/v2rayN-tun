@@ -8,7 +8,7 @@
 | 目录 | 内容 |
 |---|---|
 | [`skills/`](skills/) | **技能包**（agent 入口）。开始相关任务前先读对应的 `SKILL.md` |
-| [`docs/`](docs/README.md) | 排查记录：13 份按主题组织的「弯路 + 解法」 |
+| [`docs/`](docs/README.md) | 排查记录：14 份按主题组织的「弯路 + 解法」 |
 | [`scripts/`](scripts/) | 服务端调优、运维工具、签名证书准备（可独立使用） |
 | `config/` `daemon/` `launchd/` | TUN 守护进程与 Cmd+Q 拦截器的安装源文件 |
 | `install.sh` `uninstall.sh` | TUN 守护进程的安装 / 卸载 |
@@ -87,6 +87,12 @@
 12. **判断代理健康不能只看端口。** 休眠时进程还在、socket 还在，但网络栈已被
    系统拆掉。必须同时确认"接口是否真的存在"。
 13. **轮询周期就是泄漏窗口。** 30 秒轮询 = 30 秒暴露。能用事件驱动就别轮询。
+14. **不要假设"节点只是中转"。** 实测商业节点会按 SNI 选择性屏蔽域名。
+    "某个网站打不开但其他都正常"时, 节点本身要列为嫌疑对象。
+    定位方法: 固定 IP 只换 SNI —— `curl -k --resolve '<sni>:443:<ip>' https://<sni>`。
+15. **DNS 和路由是两套规则, 加直连例外时必须一起改。** 只改一处会得到
+    "DNS 走代理、流量走直连"的不一致状态。参考微信为什么直连: 两处都命中
+    `geosite-cn`。
 
 ## 常用命令
 
@@ -124,6 +130,7 @@ killall universalAccessAuthWarn        # 关掉卡住的授权对话框
 | [11](docs/11-hysteria2-real-cert.md) | Hysteria2 证书问题与 QUIC 的性能优势 |
 | [12](docs/12-quit-guard.md) | **Cmd+Q 拦截器的五条弯路**，含 TCC 授权的完整排查方法 |
 | [13](docs/13-ip-leak-protection.md) | **真实 IP 泄漏防护**：合盖休眠、代理掉线两条泄漏路径与 kill-switch |
+| [14](docs/14-node-sni-blocking.md) | **商业节点按 SNI 屏蔽**：分 IP/域名的排查法 + DNS/路由必须同改 |
 | [toolbox](docs/toolbox.md) | 命令速查 |
 
 **如果只读一份**：读 [12](docs/12-quit-guard.md)。它记录的不是某个配置怎么写，
