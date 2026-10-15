@@ -362,6 +362,20 @@ if [ "$LOADED_OK" = "1" ]; then
 else
     echo "⚠️  安装完成, 但有守护未加载 (见上)"
 fi
+  cat <<'POST'
+
+  ⚠️ 还差一步（必须做，否则国内方向仍然直连、真实 IP 会泄漏）
+
+       sudo ./scripts/setup-routing.sh --cn-node 日本CN2-3
+
+      它做三件事：
+        · 给 v2rayN 造一个「V4-禁直连(TUN 专用)」路由项（之后要在 GUI 里选中）
+        · 把 sing-box 的国内方向改成走指定节点（含 DNS，不再用国内 DNS）
+        · 加上只认国内 IP 的直连例外（微信/教育/政务）
+
+      只想看现状不改动：  ./scripts/setup-routing.sh --check
+
+POST
 echo "   日志:   /var/log/v2rayn-tun.log   /var/log/v2rayn-dnsguard.log"
 echo "   开关:   touch \"$TARGET_HOME/Library/Application Support/v2rayN/tun-disabled\"    # 临时关 TUN"
 echo "           echo 1500 > \"$TARGET_HOME/Library/Application Support/v2rayN/tun-mtu\"   # 临时改 MTU"

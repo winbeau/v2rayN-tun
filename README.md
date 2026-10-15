@@ -48,6 +48,36 @@ private bool AllowEnableTun() => AppManager.Instance.LinuxSudoPwd.IsNotEmpty();
 
 ---
 
+## 流量怎么走（三路）
+
+```
+例外域名 (22 个)          ->  direct      真实网络
+  微信/腾讯 · 教育网 edu.cn · 政务 gov.cn
+  （只认国内 IP，经境外节点实测全部失败）
+
+其他国内方向             ->  cn-via-jp   日本CN2-3  151.242.164.241
+  （geoip-cn / geosite-cn；DNS 也从这里解析，不再用国内 DNS）
+
+国外方向                 ->  proxy -> xray -> 住宅节点  66.248.154.224
+  （Claude 走的就是这条）
+
+局域网 / 本地域名         ->  direct
+```
+
+**豁免进程**（AdsPower 的 `SunBrowser` 系列）额外一条：国外目标走 `node-direct`
+（vless 直连住宅节点，绕开 xray）—— 因为 xray 看不到"连接来自哪个进程"，
+会按自己的路由把国内目标直连。详见 [docs/16](docs/16-cn-direct-ip-leak.md)。
+
+### 两层路由，都要配
+
+| 层 | 组件 | 在哪配 |
+|---|---|---|
+| 第 1 层 | sing-box（本项目的 TUN）| `scripts/setup-routing.sh` |
+| 第 2 层 | xray（v2rayN 管理）| GUI 里选中「V4-禁直连(TUN 专用)」|
+
+第 2 层的兜底必须是 `proxy` 而不是 `direct` —— 这样第 1 层万一漏了某个国内目标，
+第 2 层也只会送去节点，节点到不了中国 → 请求失败，但**不会泄漏真实 IP**。
+
 ## 文件说明
 
 ```
@@ -89,6 +119,19 @@ sudo ./install.sh
 **卸载**：`sudo ./uninstall.sh`
 
 ---
+
+### 装完还要配路由（必须）
+
+`install.sh` 只装 sing-box 守护；装完的配置里**国内仍然直连**，真实 IP 会泄漏。
+剩下的依赖你自己的订阅和节点选择，所以单独一步：
+
+```bash
+sudo ./scripts/setup-routing.sh --cn-node 日本CN2-3
+```
+
+然后 **打开 v2rayN → 设置 → 路由设置 → 选中「V4-禁直连(TUN 专用)」**。
+
+验证：`./scripts/setup-routing.sh --check`
 
 ## 两个免 sudo 开关
 
