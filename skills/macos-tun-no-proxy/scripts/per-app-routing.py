@@ -219,6 +219,40 @@ def add_cn_routing(out, cn_link):
     """
     changed = []
 
+    # (a0) 先给"只能直连"的域名开例外 —— 必须排在所有 CN 规则【之前】
+    #
+    #     腾讯/微信所在的网络对境外机房 IP 一律拒绝: 实测 qpic.cn /
+    #     weixin.qq.com / res.wx.qq.com 经日本节点和住宅节点【全部连不上】,
+    #     而直连正常。微信发不出图片/文件就是这个原因。
+    #     微信是国产应用, 看到中国 IP 完全正常, 与 Claude 无关。
+    #
+    #     ⚠️ DNS 也要一起改: 否则这些域名会经 jp-dns 解析到海外节点,
+    #        即使路由规则写了 direct, 直连一个海外 IP 照样连不上。
+    wx_domains = [
+        "qq.com", "weixin.qq.com", "wx.qq.com", "wechat.com", "weixin.com",
+        "qpic.cn", "qlogo.cn", "gtimg.cn", "qzonestyle.gtimg.cn",
+        "tencent.com", "tencent-cloud.net", "myqcloud.com", "qcloud.com",
+        "wechatpay.cn", "tenpay.com", "weixinbridge.com",
+    ]
+    rr = out.setdefault("route", {}).setdefault("rules", [])
+    rr[:] = [r for r in rr
+             if not (r.get("domain_suffix") == wx_domains and r.get("outbound") == "direct")]
+    pos = next((i for i, r in enumerate(rr) if r.get("outbound") == CN_TAG), len(rr))
+    rr.insert(pos, collections.OrderedDict([
+        ("outbound", "direct"),
+        ("domain_suffix", wx_domains),
+    ]))
+    changed.append(f"插入微信直连例外到 route.rules[{pos}] ({len(wx_domains)} 个域名)")
+
+    dd = out.setdefault("dns", {}).setdefault("rules", [])
+    dd[:] = [r for r in dd if not (r.get("domain_suffix") == wx_domains)]
+    dpos = next((i for i, r in enumerate(dd) if r.get("server") == CN_DNS_TAG), len(dd))
+    dd.insert(dpos, collections.OrderedDict([
+        ("server", "direct-dns-1"),
+        ("domain_suffix", wx_domains),
+    ]))
+    changed.append(f"插入微信直连解析到 dns.rules[{dpos}]")
+
     # (a) 出站
     obs = out.setdefault("outbounds", [])
     jp = build_outbound(cn_link)
