@@ -7,3 +7,8 @@ config/rules/
 
 # macOS
 .DS_Store
+
+# 订阅地址含账号 token, 只存在于用户目录, 绝不能入库
+.v2rayn-tun/
+ipequal-nodes.txt
+sub-url

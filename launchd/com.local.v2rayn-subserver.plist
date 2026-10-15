@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  本地订阅转换服务
+
+  作用: 把只提供 Clash 格式的机场订阅, 实时转成 v2rayN 能"订阅"的格式,
+        让 v2rayN 的自动更新真正生效。
+
+      v2rayN 订阅 http://127.0.0.1:18080/sub
+                           |
+                      本服务 (转换)
+                           |
+                  https://<机场>/.../sub.php?t=..&s=..
+
+  为什么需要:
+    直接把 vless:// 粘贴进 v2rayN 也能用, 但那是一次性的; SubItem 的自动
+    更新完全不会生效, 机场一换节点 IP 就得手动重来。
+
+  用户级 LaunchAgent (不是 LaunchDaemon):
+    · 只监听 127.0.0.1, 不需要 root
+    · 订阅地址文件在 ~/.v2rayn-tun/ 下, 属于当前用户
+
+  ⚠️ 必须 RunAtLoad + KeepAlive:
+     服务不常驻的话, v2rayN 自动更新时会连不上 127.0.0.1:18080,
+     表现为订阅更新失败。
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.local.v2rayn-subserver</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>__REPO__/scripts/sub-server.py</string>
+        <string>--port</string>
+        <string>18080</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <key>StandardOutPath</key>
+    <string>__USER_HOME__/Library/Logs/v2rayn-subserver.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>__USER_HOME__/Library/Logs/v2rayn-subserver.err.log</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

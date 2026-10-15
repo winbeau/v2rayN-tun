@@ -189,6 +189,21 @@ mkdir -p "$BASE_SG"
 install_subst "$REPO/daemon/sleep-guard.sh" "$BASE_SG/sleep-guard.sh" 755
 echo "   sleep-guard.sh -> $BASE_SG  (合盖阈值 ${SLEEP_TIMEOUT:-1200}s)"
 
+# ---------- 2d. 本地订阅转换服务 ----------
+# 机场只给 Clash 格式订阅时, 用本地服务转成 v2rayN 认的格式,
+# 这样 v2rayN 的「订阅自动更新」才有意义 (粘贴 vless:// 是一次性的)。
+echo "--- 2d. 安装本地订阅转换服务 ---"
+if [ -x "$REPO/scripts/sub-server.py" ] || [ -f "$REPO/scripts/sub-server.py" ]; then
+    AGENT_DIR_S="$TARGET_HOME/Library/LaunchAgents"
+    mkdir -p "$AGENT_DIR_S"
+    sed -e "s|__REPO__|$REPO|g" -e "s|__USER_HOME__|$TARGET_HOME|g" \
+        "$REPO/launchd/com.local.v2rayn-subserver.plist" \
+        > "$AGENT_DIR_S/com.local.v2rayn-subserver.plist"
+    chown "$TARGET_USER" "$AGENT_DIR_S/com.local.v2rayn-subserver.plist"
+    chmod 644 "$AGENT_DIR_S/com.local.v2rayn-subserver.plist"
+    echo "   服务: http://127.0.0.1:18080/sub   (订阅地址放在 ~/.v2rayn-tun/sub-url)"
+fi
+
 # ---------- 3. 权限收紧 ----------
 echo "--- 3. 权限 (全部 root 所有, 用户不可写) ---"
 chown -R root:wheel "$BASE_TUN" "$BASE_GUARD"

@@ -8,7 +8,7 @@
 | 目录 | 内容 |
 |---|---|
 | [`skills/`](skills/) | **技能包**（agent 入口）。开始相关任务前先读对应的 `SKILL.md` |
-| [`docs/`](docs/README.md) | 排查记录：14 份按主题组织的「弯路 + 解法」 |
+| [`docs/`](docs/README.md) | 排查记录：15 份按主题组织的「弯路 + 解法」 |
 | [`scripts/`](scripts/) | 服务端调优、运维工具、签名证书准备（可独立使用） |
 | `config/` `daemon/` `launchd/` | TUN 守护进程与 Cmd+Q 拦截器的安装源文件 |
 | `install.sh` `uninstall.sh` | TUN 守护进程的安装 / 卸载 |
@@ -93,6 +93,13 @@
 15. **DNS 和路由是两套规则, 加直连例外时必须一起改。** 只改一处会得到
     "DNS 走代理、流量走直连"的不一致状态。参考微信为什么直连: 两处都命中
     `geosite-cn`。
+16. **"粘贴节点"和"订阅"是两种东西。** 前者一次性, 后者才会更新。
+    要自动更新就必须走 SubItem。排查"节点全挂"时【先看订阅有没有在更新】,
+    再去怀疑服务商 —— 本项目曾因此误判成"机场跑路"。
+17. **写完 plist 必须 `plutil -lint`。** XML 注释里出现 `--` 会提前结束注释,
+    报错信息 (`Unexpected character h at line 9`) 完全指不到真正原因。
+18. **本地服务要先监听再拉数据, 且锁不能覆盖网络 IO。** 两个错误都表现为
+    客户端拿到 HTTP 000, 症状一模一样。
 
 ## 常用命令
 
@@ -131,6 +138,7 @@ killall universalAccessAuthWarn        # 关掉卡住的授权对话框
 | [12](docs/12-quit-guard.md) | **Cmd+Q 拦截器的五条弯路**，含 TCC 授权的完整排查方法 |
 | [13](docs/13-ip-leak-protection.md) | **真实 IP 泄漏防护**：合盖休眠、代理掉线两条泄漏路径与 kill-switch |
 | [14](docs/14-node-sni-blocking.md) | **商业节点按 SNI 屏蔽**：分 IP/域名的排查法 + DNS/路由必须同改 |
+| [15](docs/15-clash-sub-to-v2rayn.md) | **Clash 订阅 → v2rayN 自动更新**：本地转换服务 + 三个必踩的坑 |
 | [toolbox](docs/toolbox.md) | 命令速查 |
 
 **如果只读一份**：读 [12](docs/12-quit-guard.md)。它记录的不是某个配置怎么写，
