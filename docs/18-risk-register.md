@@ -23,7 +23,7 @@
 | IPv6 | `::/0 → reject`；`curl -6` 失败；en0 无全局 IPv6 地址 |
 | 时区 vs IP | `Intl...timeZone` = `America/New_York` = 出口 IP 时区 |
 | 语言 | en-US，与出口一致 |
-| WebRTC | AdsPower 已禁 + SunBrowser 已按进程豁免 |
+| WebRTC | AdsPower 已禁 + SunBrowser 已按进程豁免。**实测验证**：`ipinfo.cv/webrtc-check` 11 个 STUN（含国内 Bilibili/小米/MGTV）全部返回 `No WebRTC IP leak detected`；修复前国内 STUN 会报出真实中国 IP `124.117.210.115` |
 | IP 类型 | 住宅（Carolina Digital Phone），非机房 |
 | 时钟 | SNTP 偏差 +0.013s |
 | 系统代理 / 环境变量 | 全空 |
@@ -91,6 +91,35 @@ sudo ./scripts/per-app-routing.py apply --sub sub2
 ```
 
 代价是豁免进程访问国内站时对方看到的是日本机房 IP。**当前决定：不做。**
+
+## 附：WebRTC 泄漏的验证记录
+
+**修复前**（2026-10-15 上午）：
+
+```
+国内 STUN:  Bilibili  124.117.210.115   ✗ 真实中国 IP
+            Xiaomi    116.178.106.41    ✗
+            MGTV      124.117.210.115   ✗
+国外 STUN:  Google    154.17.27.236     ✓ 中转服务器
+            Cloudflare 66.248.154.224   ✓ 住宅出口
+```
+
+**修复后**（同日，实测 `https://ipinfo.cv/webrtc-check`）：
+
+```
+11 个 STUN 服务器（含国内 4 个、国外 7 个）全部返回
+  No WebRTC IP leak detected
+```
+
+**这证明了什么**：WebRTC 不再泄漏真实 IP。
+
+**这没有证明什么**：不能据此推断"所有流量都走了节点" ✗ ——
+那是由 `per-app-routing.py` 的进程规则保证的，与 WebRTC 是两回事：
+
+| 层 | 机制 | 覆盖的是 |
+|---|---|---|
+| WebRTC | AdsPower 关闭 WebRTC | JS 主动去问 STUN 这条路径 |
+| 路由 | SunBrowser 按进程豁免 → 全走节点 | 网页加载国内图片/脚本等**任何**国内方向的连接 |
 
 ## 复检命令
 
