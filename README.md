@@ -13,12 +13,12 @@
 > | 目录 | 内容 |
 > |---|---|
 > | [`skills/`](skills/) | **技能包**（agent 入口）：`deploy-us-proxy`（VPS 部署）、`macos-tun-no-proxy`（本机 TUN） |
-> | [`docs/`](docs/README.md) | 排查记录：17 篇「弯路 + 解法」 |
+> | [`docs/`](docs/README.md) | 排查记录：18 篇「弯路 + 解法」 |
 > | [`scripts/`](scripts/) | 服务端调优与运维工具 |
 > | `config/` `daemon/` `launchd/` `install.sh` | 本文档描述的 TUN 守护进程 |
 
 > 📚 **先读 [`docs/00 整体架构`](docs/00-architecture.md)** —— 数据流、组件、开关、脚本一览。
-> 排查记录见 [`docs/`](docs/README.md)（17 篇，每篇一句话概述）。
+> 排查记录见 [`docs/`](docs/README.md)（18 篇，每篇一句话概述）。
 
 ---
 

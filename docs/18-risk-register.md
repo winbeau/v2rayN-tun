@@ -1,0 +1,72 @@
+# 18 · 技术风险登记表
+
+> **一句话**：IPv6/时区/WebRTC/IP 类型都已干净；剩下 9 条，最重的是 DNS 泄漏和豁免名单覆盖不全。
+
+只列**技术层面**的风险。用法、支付、注册环境不在本文范围。
+
+| # | 风险 | 现状 | 严重度 | 可修 |
+|---|---|---|---|---|
+| 1 | **DNS 泄漏** | 国内域名解析走 `direct-dns-1`(119.29.29.29) 且**直连** | ★★★ | 可修，有代价 |
+| 2 | **豁免名单只覆盖 SunBrowser** | Chrome / Safari / 其他程序访问国内站仍用真实 IP | ★★★ | 可修（加进程名）|
+| 3 | **v2rayN 退出后裸连** | 退出即撤 TUN，此时开浏览器无任何保护 | ★★★ | 设计如此，靠习惯 |
+| 4 | **豁免进程到不了中国** | `node-direct` 节点的出口访问 baidu/bilibili/qq 全失败 | ★★ | 不可修（节点限制）|
+| 5 | **住宅节点是单点** | 它一挂，豁免进程完全没网 | ★★ | 未做备用 |
+| 6 | **切网 1-3 秒直连窗口** | TUN 重建期间路由已恢复直连 | ★★ | 未修 |
+| 7 | **xray 死亡不自动重启** | `kill -9` 后 10808 一直不恢复 | ★★ | 未修 |
+| 8 | **订阅服务是单点** | 它挂了 v2rayN 更新失败（已有节点仍可用）| ★ | 已缓存兜底 |
+| 9 | **机场 SNI 屏蔽列表未知** | 已处理 excalidraw，将来可能还有站点打不开 | ★ | 遇到再查 |
+
+## 已确认干净的项
+
+| 项 | 证据 |
+|---|---|
+| IPv6 | `::/0 → reject`；`curl -6` 失败；en0 无全局 IPv6 地址 |
+| 时区 vs IP | `Intl...timeZone` = `America/New_York` = 出口 IP 时区 |
+| 语言 | en-US，与出口一致 |
+| WebRTC | AdsPower 已禁 + SunBrowser 已按进程豁免 |
+| IP 类型 | 住宅（Carolina Digital Phone），非机房 |
+| 时钟 | SNTP 偏差 +0.013s |
+| 系统代理 / 环境变量 | 全空 |
+
+## 前三条的处置建议
+
+**1. DNS 泄漏** —— 两种改法都有代价：
+
+```bash
+# A. 所有域名都走远端 DoH (Cloudflare, 经代理)
+#    代价: .local 解析不了; 国内站变慢
+# B. 保持现状
+#    代价: 查询泄漏给腾讯 DNS (但不改变流量走的路径)
+```
+
+**2. 豁免名单覆盖不全** —— 加进程名即可，但要写**真正发起连接的那个进程**：
+
+```bash
+# 看当前生效的名单
+python3 -c "import json;d=json.load(open('/usr/local/libexec/v2rayn-tun/config.json'));\
+print([r.get('process_name') for r in d['route']['rules'] if r.get('outbound')=='node-direct'])"
+
+# 改名单后重新应用 (会先实测节点可用性)
+sudo ./scripts/per-app-routing.py apply --sub sub2
+```
+
+**3. v2rayN 退出后裸连** —— 这个没有技术解法，只能靠习惯：
+
+```
+用敏感服务前先确认 v2rayN 在运行
+或: touch ~/Library/Application\ Support/v2rayN/killswitch-always
+    (退出后也保留 TUN —— 但会阻断所有境外流量)
+```
+
+## 复检命令
+
+```bash
+./scripts/stealth-mode.sh test          # STUN 泄漏实测
+python3 ./scripts/test-nodes.py --grep 住宅   # 节点可用性
+```
+
+```bash
+# 免除进程 vs 普通进程的出口对比 (Terminal 里跑)
+curl -s --noproxy '*' https://ip.3322.net   # 普通进程 -> 真实 IP
+# AdsPower 里打开 https://ipinfo.cv/webrtc-check  -> 应全是住宅 IP
+```
