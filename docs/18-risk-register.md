@@ -6,7 +6,7 @@
 
 | # | 风险 | 现状 | 严重度 | 可修 |
 |---|---|---|---|---|
-| 1 | ~~DNS 泄漏~~ | **已解决**：国内域名改走 `jp-dns`（经日本节点），国内 DNS 不再参与 | — | ✅ 已实施 |
+| 1 | ~~DNS 泄漏~~ | **已解决**：国内域名走 `jp-dns`（经日本）；第 2 层 xray 也改为禁直连 | — | ✅ 已实施 |
 | 2 | **豁免名单只覆盖 SunBrowser** | Chrome / Safari / 其他程序访问国内站仍用真实 IP | ★★★ | 可修（加进程名）|
 | 3 | **v2rayN 退出后裸连** | 退出即撤 TUN，此时开浏览器无任何保护 | ★★★ | 设计如此，靠习惯 |
 | 4 | **豁免进程到不了中国** | `node-direct` 节点的出口访问 baidu/bilibili/qq 全失败 | ★★ | 不可修（节点限制）|
@@ -201,6 +201,55 @@ and removed in sing-box 1.14.0
 经境外节点必然失败。与 Claude 的风险无关。
 
 **注意**：没有加 `com.cn` / `org.cn` —— 太宽，会把大量商业站点也放回直连。
+
+### 第 2 层 xray 也改成 fail-closed（2026-10-15 完成）
+
+**问题**：TUN（第 1 层）已把国内方向送去日本，但 xray（第 2 层）仍带
+v2rayN 的「绕过大陆」`geoip:cn` / `geosite:cn -> direct`。两层名单来源不同
+（sing-box rule-set vs xray geoip.dat），可能漂移 —— 一旦某个 IP 只在
+xray 名单里，第 1 层放它去 proxy，第 2 层又把它直连出去。
+
+**解法**：造一个自定义路由项并选中。
+
+```bash
+python3 scripts/make-routing-profile.py          # 创建/更新
+python3 scripts/make-routing-profile.py --list   # 看清单
+python3 scripts/make-routing-profile.py --remove # 删除
+# 然后在 v2rayN: 设置 -> 路由设置 -> 选中「V4-禁直连(TUN 专用)」
+```
+
+规则结构照抄内置的「V4-全局(Global)」，只是名字写清楚用途：
+
+```
+udp 443 -> block / geoip:private -> direct /
+geosite:private -> direct / 其余 -> proxy
+```
+
+**验证（选中后读 xray 实际生成的配置）**：
+
+```
+[0] block   <- udp 443
+[1] direct  <- geoip:private
+[2] direct  <- geosite:private
+[3] proxy   <- 0-65535          ← 兜底 proxy
+[4] direct  <- inboundTag=direct-dns-1
+[5] proxy   <- inboundTag=dns-module
+
+含 geoip:cn / geosite:cn 的 direct 规则: 没有了 ✓
+```
+
+**效果**：第 1 层漏掉的目标会走节点 → 节点到不了中国 → 请求失败，
+但**不会泄漏真实 IP**。
+
+### 两个存储字段的坑
+
+| 字段 | 位置 | 说明 |
+|---|---|---|
+| `RoutingItem.IsActive` | 数据库 | **真正标记"当前选中"的就是它** |
+| `RoutingBasicItem.RoutingIndexId` | guiNConfig.json | 一直是 `null`，**不表示选择** —— 曾据此误判"没选中" |
+
+另外 **v2rayN 运行中退出时会覆写数据库**，改库前后要留意；
+脚本已在改动前自动备份为 `guiNDB.db.bak-route-<时间戳>`。
 
 ## 复检命令
 
