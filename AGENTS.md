@@ -153,8 +153,10 @@ killall universalAccessAuthWarn        # 关掉卡住的授权对话框
 
 ## 维护提示
 
-- **技能包内的脚本是自包含副本**，便于单独分发；`vps-compare.sh` 与
-  `add-reality-inbound.py` 在根 `scripts/` 下也有一份（供文档引用）。
-  改动时两边都要更新，可用 `diff` 校验一致性。
+- **技能包内的脚本是自包含副本**，便于单独分发。改动时两边都要更新，
+  用 `diff -rq scripts/ skills/macos-tun-no-proxy/scripts/` 校验一致性。
 - **`config/` `daemon/` `launchd/` 是 TUN 守护进程的安装源**，
   `skills/macos-tun-no-proxy/` 下是同样内容的副本。`install.sh` 读的是根目录这份。
+- **技能包独有的两个文件**（根目录没有对应物，属正常）：
+  `install-tun.sh`（技能包自己那套布局的安装脚本，根目录用 `install.sh`）
+  与 `proxy-toggle.sh`（终端代理开关）。

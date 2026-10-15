@@ -6,21 +6,48 @@
 
 ```
                          ┌──────────────────────────────────────┐
-   AdsPower/SunBrowser ──┤                                      │
-   (豁免进程)            │        sing-box (root LaunchDaemon)  │
-                         │        TUN: utun*  172.19.0.1        │──→ node-direct ─→ 住宅节点
-                         │        stack=system  auto_route       │    (vless, 裸连)
-   其他所有进程 ─────────┤        mtu=1500 (可调)                │
-   (含 Terminal)         │                                      │──→ proxy ─→ 127.0.0.1:10808
-                         └──────────────────────────────────────┘              └→ xray (v2rayN 管理)
-                                                                                      └→ 节点
+  例外域名                │                                      │
+  (微信/教育/政务 22个) ──┤                                      │──→ direct ──→ 真实网络
+                         │                                      │
+  其他国内方向 ──────────┤        sing-box (root LaunchDaemon)  │──→ cn-via-jp ─→ 日本CN2-3
+  (geoip-cn/geosite-cn)  │        TUN: utun*  172.19.0.1        │                151.242.164.241
+                         │        stack=system  auto_route       │
+  国外方向 ──────────────┤        mtu=1500 (可调)                │──→ proxy ──→ 127.0.0.1:10808
+  (含 AdsPower 例外进程)  │                                      │              └→ xray ─→ 住宅节点
+                         └──────────────────────────────────────┘                          66.248.154.224
 ```
 
-**默认路径**：进程 → TUN → sing-box → `proxy`(socks) → xray → 节点
-**豁免路径**：名单内进程 → TUN → sing-box → `node-direct` → 节点（绕过 xray）
+**三条出路**：
 
-**为什么豁免要绕过 xray**：xray 看不到"连接来自哪个进程"，它会按自己的路由
-把国内目标直连，从而泄漏真实 IP。详见 [16](16-cn-direct-ip-leak.md)。
+| 目标 | 出站 | 出口 IP | 说明 |
+|---|---|---|---|
+| 例外域名（22 个）| `direct` | 你的真实 IP | 只认国内 IP 的站点，见下 |
+| 其他国内方向 | `cn-via-jp` | `151.242.164.241` 日本 | 不再泄漏真实 IP，DNS 也走这里 |
+| 国外方向 | `proxy` → xray → 节点 | `66.248.154.224` 住宅 | Claude 用的就是这条 |
+
+**豁免进程**（`SunBrowser` 系列）额外有一条：国外目标走 `node-direct`
+（vless 直连住宅节点，绕开 xray）—— 因为 xray 看不到"连接来自哪个进程"，
+会按自己的路由把国内目标直连。详见 [16](16-cn-direct-ip-leak.md)。
+
+**例外域名**（只能直连，经日本节点实测全部失败）：
+
+```
+腾讯/微信   qq.com weixin.qq.com qpic.cn qlogo.cn gtimg.cn tencent.com …
+教育网      edu.cn ac.cn chsi.com.cn
+政务        gov.cn gov.hk
+```
+
+### 两层路由（都要改，只改一层不生效）
+
+| 层 | 组件 | 国内方向 | 角色 |
+|---|---|---|---|
+| 第 1 层 | sing-box（我们的 TUN）| → `cn-via-jp` 日本 | 决定主路径 |
+| 第 2 层 | xray（v2rayN 管理）| → `proxy` 节点 | 兜底 |
+
+第 2 层必须选中 **`V4-禁直连(TUN 专用)`** 这个自定义路由配置项
+（`scripts/make-routing-profile.py` 生成）。它的兜底是 `proxy` 而不是
+`direct` —— 这样第 1 层万一漏了某个国内目标，第 2 层也只会送去节点，
+节点到不了中国 → 请求失败，但**不会泄漏真实 IP**（fail-closed）。
 
 ## 组件
 
@@ -43,6 +70,13 @@ DNS / 端口 / kill-switch）。守护本身常驻，但不产生任何流量影
 | `config/sing-box.json` | **唯一事实来源**（仓库） |
 | `/usr/local/libexec/v2rayn-tun/config.json` | 安装后的实体 |
 | `/usr/local/libexec/v2rayn-tun/config.run.json` | 运行时（只在 `config.json` 基础上换 MTU） |
+
+**v2rayN 侧还有两处独立配置**（GUI 里改，不在仓库）：
+
+| 位置 | 作用 |
+|---|---|
+| 路由设置 → `V4-禁直连(TUN 专用)` | 决定 xray（第 2 层）怎么走 |
+| 用 `scripts/make-routing-profile.py` 生成 | 见上文"两层路由" |
 
 **⚠️ 运行时脚本可能再改线上配置**（如 `per-app-routing.py apply` 会加 `node-direct`
 出站和进程规则）。这类改动**不会自动回写仓库** —— 重装后需要重新执行对应脚本。
