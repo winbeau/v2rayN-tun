@@ -8,7 +8,7 @@
 | 目录 | 内容 |
 |---|---|
 | [`skills/`](skills/) | **技能包**（agent 入口）。开始相关任务前先读对应的 `SKILL.md` |
-| [`docs/`](docs/README.md) | 排查记录：16 份按主题组织的「弯路 + 解法」 |
+| [`docs/`](docs/README.md) | 排查记录：17 份按主题组织的「弯路 + 解法」 |
 | [`scripts/`](scripts/) | 服务端调优、运维工具、签名证书准备（可独立使用） |
 | `config/` `daemon/` `launchd/` | TUN 守护进程与 Cmd+Q 拦截器的安装源文件 |
 | `install.sh` `uninstall.sh` | TUN 守护进程的安装 / 卸载 |
@@ -110,6 +110,12 @@
 21. **给被豁免的进程配节点时, 必须先实测节点可用性。**
     配错了不是"泄漏"而是"完全没网", 体验上更糟。本项目实测中被这一步救过一次
     (默认取了已被阻断的节点)。
+22. **细节的具体程度不是可信度。** 流行的"Claude Code 隐写标记"说法列了
+    147 个域名 + XOR 密钥 91 + 三个具体 Unicode 码点, 听起来像深度逆向 ——
+    实际反汇编后一个字面量都对不上。**要验证, 不要相信具体感。**
+23. **验证必须带阳性对照。** 搜不到目标字符串时, 必须同时确认一个已知存在的
+    字符串能搜到, 否则无法排除"方法本身错了"。本项目在 rule-set match 上
+    踩过同一个坑(参数顺序错把 qq.com 判成不在国内名单里)。
 
 ## 常用命令
 
@@ -150,6 +156,7 @@ killall universalAccessAuthWarn        # 关掉卡住的授权对话框
 | [14](docs/14-node-sni-blocking.md) | **商业节点按 SNI 屏蔽**：分 IP/域名的排查法 + DNS/路由必须同改 |
 | [15](docs/15-clash-sub-to-v2rayn.md) | **Clash 订阅 → v2rayN 自动更新**：本地转换服务 + 三个必踩的坑 |
 | [16](docs/16-cn-direct-ip-leak.md) | **国内直连泄漏真实 IP**：两层规则 + 按进程豁免 + 定位方法 |
+| [17](docs/17-claude-ban-detection-analysis.md) | **封号检测调研**：证伪一个流行说法 + 环境一致性清单 |
 | [toolbox](docs/toolbox.md) | 命令速查 |
 
 **如果只读一份**：读 [12](docs/12-quit-guard.md)。它记录的不是某个配置怎么写，

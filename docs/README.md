@@ -27,6 +27,7 @@
 | [14](14-node-sni-blocking.md) | **商业节点按 SNI 选择性屏蔽** ⭐⭐ | 「节点只是中转」是错误的心智模型 |
 | [15](15-clash-sub-to-v2rayn.md) | **Clash 订阅转 v2rayN + 自动更新** ⭐⭐ | 「粘贴节点」和「订阅」是两种东西 |
 | [16](16-cn-direct-ip-leak.md) | **国内直连泄漏真实 IP（两层规则）** ⭐⭐⭐ | 改一层没用；进程匹配要写真正发起连接的那个 |
+| [17](17-claude-ban-detection-analysis.md) | **Claude 封号检测调研（含一次证伪）** ⭐⭐⭐ | 细节的具体程度不是可信度；风控看"矛盾"不看"伪装" |
 | [toolbox](toolbox.md) | **排查命令速查** ⭐ | 本项目真正用上的技巧 |
 
 ---
