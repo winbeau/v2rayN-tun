@@ -43,6 +43,7 @@ import argparse
 import base64
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -77,12 +78,26 @@ CACHE_TTL = int(os.environ.get("SUB_CACHE_TTL", "60"))
 # 早先的版本把整段 fetch 包在锁里, 结果 warmup 线程拉取期间所有 HTTP 请求
 # 都堵在锁上, 表现为 v2rayN/curl 拿到空响应 (超时)。
 _lock = threading.Lock()
-_cache = {"at": 0.0, "links": [], "error": None}
-_fetching = threading.Event()
+# 每条订阅独立缓存 —— 两条线路的更新节奏互不影响
+_cache = {}          # name -> {"at": float, "links": list, "error": str|None}
+_fetching = {}       # name -> threading.Event
 
 
-def load_sub_url():
-    uf = os.environ.get("SUB_URL_FILE", DEFAULT_URL_FILE)
+# 订阅来源: 名字 -> 地址文件
+#   /sub   -> sub-url      (第 1 条)
+#   /sub2  -> sub-url-2    (第 2 条)
+# 加新线路只要再放一个 sub-url-N 文件, 不用改代码。
+SUB_DIR = os.path.expanduser("~/.v2rayn-tun")
+
+
+def sub_url_file(name):
+    if name == "sub":
+        return os.path.join(SUB_DIR, "sub-url")
+    return os.path.join(SUB_DIR, f"sub-url-{name[3:]}")
+
+
+def load_sub_url(name="sub"):
+    uf = sub_url_file(name)
     if not os.path.exists(uf):
         raise RuntimeError(f"没有订阅地址文件: {uf}")
     url = open(uf, encoding="utf-8").read().strip()
@@ -91,9 +106,9 @@ def load_sub_url():
     return url
 
 
-def _do_fetch():
+def _do_fetch(name="sub"):
     """真正去拉取并转换。不加锁。"""
-    url = load_sub_url()
+    url = load_sub_url(name)
     req = urllib.request.Request(url, headers={"User-Agent": "v2rayN/7.25.4"})
     with urllib.request.urlopen(req, timeout=30) as r:
         text = r.read().decode("utf-8", "replace")
@@ -104,49 +119,56 @@ def _do_fetch():
     return links
 
 
-def get_links(force=False, block=True):
+def _slot(name):
+    with _lock:
+        return _cache.setdefault(name, {"at": 0.0, "links": [], "error": None})
+
+
+def get_links(name="sub", force=False, block=True):
     """返回 (links, error)。
 
+    name        : 订阅名 ("sub" / "sub2" / ...)
     block=True  : 缓存过期就同步拉取 (会等)
     block=False : 缓存过期就【先返回旧数据】并在后台刷新 (不阻塞 HTTP)
     """
+    slot = _slot(name)
     with _lock:
-        fresh = (time.time() - _cache["at"]) < CACHE_TTL
-        if fresh and not force and _cache["links"]:
-            return list(_cache["links"]), _cache["error"]
-        stale = list(_cache["links"])
+        fresh = (time.time() - slot["at"]) < CACHE_TTL
+        if fresh and not force and slot["links"]:
+            return list(slot["links"]), slot["error"]
+        stale = list(slot["links"])
+        err = slot["error"]
 
     if not block:
-        # 后台刷新, 本次先用旧的
         def bg():
             try:
-                links = _do_fetch()
+                links = _do_fetch(name)
                 with _lock:
-                    _cache.update(at=time.time(), links=links, error=None)
+                    slot.update(at=time.time(), links=links, error=None)
             except Exception as e:
                 with _lock:
-                    _cache["error"] = str(e)
-        if not _fetching.is_set():
-            _fetching.set()
+                    slot["error"] = str(e)
+        ev = _fetching.setdefault(name, threading.Event())
+        if not ev.is_set():
+            ev.set()
             def wrap():
                 try:
                     bg()
                 finally:
-                    _fetching.clear()
+                    ev.clear()
             threading.Thread(target=wrap, daemon=True).start()
-        return stale, _cache["error"]
+        return stale, err
 
-    # 同步路径: 拉取时不持锁
     try:
-        links = _do_fetch()
+        links = _do_fetch(name)
         with _lock:
-            _cache.update(at=time.time(), links=links, error=None)
+            slot.update(at=time.time(), links=links, error=None)
         return links, None
     except Exception as e:
         with _lock:
-            _cache["error"] = str(e)
-            if _cache["links"]:
-                return list(_cache["links"]), str(e)
+            slot["error"] = str(e)
+            if slot["links"]:
+                return list(slot["links"]), str(e)
         return [], str(e)
 
 
@@ -173,8 +195,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = self.path.split("?")[0].rstrip("/") or "/"
 
-        if path in ("/sub", "/subscribe"):
-            links, err = get_links(block=False)
+        if path in ("/sub", "/subscribe") or re.fullmatch(r"/sub[0-9]+", path):
+            name = "sub" if path in ("/sub", "/subscribe") else path[1:]
+            links, err = get_links(name=name, block=False)
             if not links:
                 self._send(f"# 转换失败: {err}\n", code=502)
                 return
@@ -198,21 +221,27 @@ class Handler(BaseHTTPRequestHandler):
                 out.append(f"{name:<36} {p.hostname}:{p.port}")
             self._send("\n".join(out) + "\n")
 
-        elif path == "/refresh":
-            links, err = get_links(force=True)
+        elif path in ("/refresh",) or re.fullmatch(r"/refresh[0-9]+", path):
+            name = "sub" if path == "/refresh" else "sub" + path[len("/refresh"):]
+            links, err = get_links(name=name, force=True)
             self._send(json.dumps({"count": len(links), "error": err},
                                   ensure_ascii=False) + "\n",
                        ctype="application/json")
 
         elif path == "/health":
             # 非阻塞: 健康检查绝不能因为缓存过期而挂住 (会误导成"服务挂了")
-            links, err = get_links(block=False)
-            self._send(json.dumps({
-                "ok": bool(links),
-                "count": len(links),
-                "age": int(time.time() - _cache["at"]) if _cache["at"] else None,
-                "error": err,
-            }, ensure_ascii=False) + "\n", ctype="application/json")
+            out = {}
+            for nm in _cache.keys() | {"sub"}:
+                links, err = get_links(name=nm, block=False)
+                slot = _slot(nm)
+                out[nm] = {
+                    "ok": bool(links),
+                    "count": len(links),
+                    "age": int(time.time() - slot["at"]) if slot["at"] else None,
+                    "error": err,
+                }
+            self._send(json.dumps(out, ensure_ascii=False, indent=2) + "\n",
+                       ctype="application/json")
 
         else:
             self._send(
@@ -239,11 +268,14 @@ def main():
     # 之前的顺序是先 get_links() 再 serve_forever() —— 拉取要几秒到几十秒,
     # 这段时间端口没在听, v2rayN 会直接连不上 (表现为 000)。
     def warmup():
-        links, err = get_links(force=True, block=True)
-        if links:
-            print(f"[sub-server] 就绪: {len(links)} 个节点", flush=True)
-        else:
-            print(f"[sub-server] ⚠ 拉取失败: {err}", flush=True)
+        for nm in ("sub", "sub2"):
+            if not os.path.exists(sub_url_file(nm)):
+                continue
+            links, err = get_links(name=nm, force=True, block=True)
+            if links:
+                print(f"[sub-server] {nm} 就绪: {len(links)} 个节点", flush=True)
+            else:
+                print(f"[sub-server] ⚠ {nm} 拉取失败: {err}", flush=True)
 
     threading.Thread(target=warmup, daemon=True).start()
 
