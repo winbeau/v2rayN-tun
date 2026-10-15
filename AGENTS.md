@@ -8,7 +8,7 @@
 | 目录 | 内容 |
 |---|---|
 | [`skills/`](skills/) | **技能包**（agent 入口）。开始相关任务前先读对应的 `SKILL.md` |
-| [`docs/`](docs/README.md) | 排查记录：15 份按主题组织的「弯路 + 解法」 |
+| [`docs/`](docs/README.md) | 排查记录：16 份按主题组织的「弯路 + 解法」 |
 | [`scripts/`](scripts/) | 服务端调优、运维工具、签名证书准备（可独立使用） |
 | `config/` `daemon/` `launchd/` | TUN 守护进程与 Cmd+Q 拦截器的安装源文件 |
 | `install.sh` `uninstall.sh` | TUN 守护进程的安装 / 卸载 |
@@ -100,6 +100,16 @@
     报错信息 (`Unexpected character h at line 9`) 完全指不到真正原因。
 18. **本地服务要先监听再拉数据, 且锁不能覆盖网络 IO。** 两个错误都表现为
     客户端拿到 HTTP 000, 症状一模一样。
+19. **★★ 改路由规则前先数清楚有几层。★★**
+    本项目有【两层】国内直连: sing-box 一层、xray(v2rayN 路由)一层。
+    只改一层, 泄漏纹丝不动。定位方法: 固定同一个目标, 对比"走 TUN"和
+    "强制走 socks5h://127.0.0.1:10808", 结果不同就说明是后一层在直连。
+20. **按进程匹配要写【真正发起连接的那个进程】, 不是它所在的程序。**
+    用户想在 Terminal 里让 Claude Code 走代理, 写 "Terminal" 完全不生效 ——
+    发请求的是子进程 curl / git / node。验证方法: 临时把 curl 加进名单看是否立即生效。
+21. **给被豁免的进程配节点时, 必须先实测节点可用性。**
+    配错了不是"泄漏"而是"完全没网", 体验上更糟。本项目实测中被这一步救过一次
+    (默认取了已被阻断的节点)。
 
 ## 常用命令
 
@@ -139,6 +149,7 @@ killall universalAccessAuthWarn        # 关掉卡住的授权对话框
 | [13](docs/13-ip-leak-protection.md) | **真实 IP 泄漏防护**：合盖休眠、代理掉线两条泄漏路径与 kill-switch |
 | [14](docs/14-node-sni-blocking.md) | **商业节点按 SNI 屏蔽**：分 IP/域名的排查法 + DNS/路由必须同改 |
 | [15](docs/15-clash-sub-to-v2rayn.md) | **Clash 订阅 → v2rayN 自动更新**：本地转换服务 + 三个必踩的坑 |
+| [16](docs/16-cn-direct-ip-leak.md) | **国内直连泄漏真实 IP**：两层规则 + 按进程豁免 + 定位方法 |
 | [toolbox](docs/toolbox.md) | 命令速查 |
 
 **如果只读一份**：读 [12](docs/12-quit-guard.md)。它记录的不是某个配置怎么写，
