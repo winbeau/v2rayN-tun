@@ -237,8 +237,14 @@ def add_cn_routing(out, cn_link):
     servers = dns.setdefault("servers", [])
     if not any(sv.get("tag") == CN_DNS_TAG for sv in servers):
         servers.append(collections.OrderedDict([
+            # ⚠️ sing-box 1.12+ 用新格式 (type + server + path + domain_resolver)
+            #    旧的 address 字段在 1.14 已被移除, 用了会直接启动失败。
+            #    形状照抄本机已在用的 remote-dns-1。
+            ("type", "https"),
             ("tag", CN_DNS_TAG),
-            ("address", "https://1.1.1.1/dns-query"),
+            ("server", "cloudflare-dns.com"),
+            ("path", "/dns-query"),
+            ("domain_resolver", "hosts-dns"),
             ("detour", CN_TAG),
         ]))
         changed.append(f"新增 DNS 服务器 [{CN_DNS_TAG}] (DoH, 经 {CN_TAG} 发出)")
@@ -439,15 +445,26 @@ def main():
     if not os.path.exists(bak):
         subprocess.run(["cp", LIVE, bak])
         print(f"  已备份 -> {bak}", file=sys.stderr)
-    open(LIVE, "w", encoding="utf-8").write(text)
-    os.chmod(LIVE, 0o644)
-    subprocess.run(["chown", "root:wheel", LIVE])
 
-    r = subprocess.run(["/usr/local/libexec/v2rayn-tun/sing-box", "check", "-c", LIVE],
+    # ⚠️ 必须先写临时文件、校验通过、再 mv 到正式位置。
+    # 早先是"先写 LIVE 再 check" —— 校验失败时 LIVE 已经是坏的了,
+    # 守护虽然还在跑内存里的旧配置(网络看起来正常), 但只要重启就起不来。
+    tmp = LIVE + ".new"
+    open(tmp, "w", encoding="utf-8").write(text)
+    os.chmod(tmp, 0o644)
+    subprocess.run(["chown", "root:wheel", tmp])
+
+    r = subprocess.run(["/usr/local/libexec/v2rayn-tun/sing-box", "check", "-c", tmp],
                        capture_output=True, text=True)
     if r.returncode != 0:
-        sys.exit(f"✗ 配置校验失败, 未重启:\n{r.stderr[:500]}")
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        sys.exit(f"✗ 配置校验失败, 线上文件未改动:\n{r.stderr[:500]}")
     print("  ✓ 配置校验通过", file=sys.stderr)
+
+    os.replace(tmp, LIVE)
 
     subprocess.run(["launchctl", "kickstart", "-k", "system/com.local.v2rayn-tun"])
     print("  ✓ 守护已重启", file=sys.stderr)
