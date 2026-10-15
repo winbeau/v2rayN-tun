@@ -61,6 +61,14 @@ LIVE = "/usr/local/libexec/v2rayn-tun/config.json"
 SUBSERVER = "http://127.0.0.1:18080/links"
 NODE_TAG = "node-direct"
 
+# 国内目标走哪个出站。设了就"国内直连"不复存在 —— 包括 DNS 也不再用国内服务器。
+CN_TAG = "cn-via-jp"
+CN_DNS_TAG = "jp-dns"
+
+# 这些 direct 规则必须保留 (改了会出问题)
+KEEP_DIRECT_RULE_SETS = {"geosite-private"}   # 私有/本地域名
+KEEP_DIRECT_KEYS = {"process_path", "ip_is_private", "clash_mode"}
+
 # ── 走"直连节点"的进程 ──
 #
 # ⚠️ 这里要写【真正发起连接的那个进程】, 不是"它所在的程序"。
@@ -195,6 +203,107 @@ def build_outbound(link):
     return ob
 
 
+def pick_node(links, keyword):
+    """从节点链接里挑一个 (按名字关键词)"""
+    for l in links:
+        if keyword in urllib.parse.unquote(urllib.parse.urlparse(l).fragment):
+            return l
+    return None
+
+
+def add_cn_routing(out, cn_link):
+    """把"国内直连"整体改成走 cn_link 指定的出站, 并让国内 DNS 也从那里解析。
+
+    这一步做完, 本机就再没有"国内直连"了 —— 包括 DNS 查询也不再发给
+    国内的 119.29.29.29 之类服务器。
+    """
+    changed = []
+
+    # (a) 出站
+    obs = out.setdefault("outbounds", [])
+    jp = build_outbound(cn_link)
+    jp["tag"] = CN_TAG
+    idx = next((i for i, o in enumerate(obs) if o.get("tag") == CN_TAG), None)
+    name = urllib.parse.unquote(urllib.parse.urlparse(cn_link).fragment)
+    if idx is None:
+        obs.insert(1 if obs else 0, jp)
+        changed.append(f"新增出站 [{CN_TAG}] -> {jp['server']}  ({name})")
+    else:
+        obs[idx] = jp
+        changed.append(f"更新出站 [{CN_TAG}] -> {jp['server']}  ({name})")
+
+    # (b) DNS 服务器: 一个专门走 cn-via-jp 的解析器
+    dns = out.setdefault("dns", {})
+    servers = dns.setdefault("servers", [])
+    if not any(sv.get("tag") == CN_DNS_TAG for sv in servers):
+        servers.append(collections.OrderedDict([
+            ("tag", CN_DNS_TAG),
+            ("address", "https://1.1.1.1/dns-query"),
+            ("detour", CN_TAG),
+        ]))
+        changed.append(f"新增 DNS 服务器 [{CN_DNS_TAG}] (DoH, 经 {CN_TAG} 发出)")
+
+    # (c) DNS 规则: 原本走 direct-dns-1 的国内相关规则, 全改成走 jp-dns
+    #     保留 geosite-private (本地域名, 远端解析不了)
+    for i, r in enumerate(dns.get("rules", [])):
+        if r.get("server") != "direct-dns-1":
+            continue
+        if set(r.get("rule_set") or []) & KEEP_DIRECT_RULE_SETS:
+            continue
+        if r.get("clash_mode") == "Direct":
+            continue
+        desc = r.get("rule_set") or r.get("domain_suffix") or "?"
+        r["server"] = CN_DNS_TAG
+        changed.append(f"dns.rules[{i}] {str(desc)[:44]} direct-dns-1 -> {CN_DNS_TAG}")
+
+    # (d) 路由规则: 原本走 direct 的国内相关规则, 全改成走 cn-via-jp
+    for i, r in enumerate(out.get("route", {}).get("rules", [])):
+        if r.get("outbound") != "direct":
+            continue
+        if any(k in r for k in KEEP_DIRECT_KEYS):
+            continue
+        if set(r.get("rule_set") or []) & KEEP_DIRECT_RULE_SETS:
+            continue
+        desc = r.get("rule_set") or r.get("domain_suffix") or r.get("ip_cidr") or "?"
+        r["outbound"] = CN_TAG
+        changed.append(f"route.rules[{i}] {str(desc)[:44]} direct -> {CN_TAG}")
+
+    return changed
+
+
+def fetch_residential_node(source="sub2"):
+    """从本地订阅服务取住宅节点的 vless 链接
+
+    source: "sub" / "sub2" / ...  ->  http://127.0.0.1:18080/<source>
+    端点返回的是 base64 (标准 v2ray 订阅格式), 这里兼容 base64 和明文两种。
+    """
+    url = SUBSERVER.rsplit("/", 1)[0] + "/" + source
+    try:
+        with urllib.request.urlopen(url, timeout=20) as r:
+            raw = r.read().decode("utf-8", "replace").strip()
+        if "://" not in raw:
+            import base64 as _b64
+            pad = raw + "=" * (-len(raw) % 4)
+            try:
+                raw = _b64.urlsafe_b64decode(pad).decode("utf-8", "replace")
+            except Exception:
+                try:
+                    raw = _b64.b64decode(pad).decode("utf-8", "replace")
+                except Exception:
+                    pass
+        links = [l.strip() for l in raw.splitlines() if l.strip()]
+    except Exception as e:
+        sys.exit(f"✗ 读不到本地订阅服务 ({url}): {e}\n"
+                 f"  先确认它在跑: curl -s http://127.0.0.1:18080/health")
+    if not links:
+        sys.exit("✗ 订阅服务没返回任何节点")
+    for l in links:
+        name = urllib.parse.unquote(urllib.parse.urlparse(l).fragment)
+        if "住宅" in name:
+            return l, name
+    return links[0], urllib.parse.unquote(urllib.parse.urlparse(links[0]).fragment)
+
+
 def patch(cfg, node_link):
     """返回 (新配置, 改动说明列表)"""
     out = json.loads(json.dumps(cfg))
@@ -257,6 +366,8 @@ def main():
     ap.add_argument("--sub", default="sub2",
                     help="用哪条订阅的住宅节点 (默认 sub2; 本地服务里 /sub 和 /sub2)")
     ap.add_argument("--skip-check", action="store_true", help="跳过节点可用性预检 (不推荐)")
+    ap.add_argument("--cn-node", metavar="关键词", default=None,
+                    help='把"国内直连"整体改成走该节点 (含 DNS)。例如 --cn-node 日本CN2-3')
     args = ap.parse_args()
 
     if args.action == "verify":
@@ -279,6 +390,26 @@ def main():
         print(f"  ✓ 节点可用 ({info})", file=sys.stderr)
 
     newcfg, changed = patch(cfg, node_link)
+
+    # 可选: 把国内直连整体换成走某个节点
+    if args.cn_node:
+        # 拿到全部节点链接来挑选
+        u0 = SUBSERVER.rsplit("/", 1)[0] + "/" + args.sub
+        rawb = urllib.request.urlopen(u0, timeout=20).read().decode().strip()
+        if "://" not in rawb:
+            import base64 as _b
+            rawb = _b.urlsafe_b64decode(rawb + "=" * (-len(rawb) % 4)).decode()
+        all_links = [l.strip() for l in rawb.splitlines() if l.strip().startswith("vless://")]
+        cn_link = pick_node(all_links, args.cn_node)
+        if not cn_link:
+            sys.exit(f"✗ 找不到名字含「{args.cn_node}」的节点")
+        if not args.skip_check:
+            print(f"  预检国内出口节点 ...", file=sys.stderr)
+            ok2, info2 = node_is_alive(cn_link)
+            if ok2 is False:
+                sys.exit(f"✗ 国内出口节点不可用 ({info2})")
+            print(f"  ✓ 可用 ({info2})", file=sys.stderr)
+        changed += add_cn_routing(newcfg, cn_link)
     for c in changed:
         print(f"  · {c}", file=sys.stderr)
 

@@ -6,7 +6,7 @@
 
 | # | 风险 | 现状 | 严重度 | 可修 |
 |---|---|---|---|---|
-| 1 | **DNS 泄漏** | 国内域名解析走 `direct-dns-1`(119.29.29.29) 且**直连** | ★★★ | 可修，有代价 |
+| 1 | ~~DNS 泄漏~~ | **已解决**：国内域名改走 `jp-dns`（经日本节点），国内 DNS 不再参与 | — | ✅ 已实施 |
 | 2 | **豁免名单只覆盖 SunBrowser** | Chrome / Safari / 其他程序访问国内站仍用真实 IP | ★★★ | 可修（加进程名）|
 | 3 | **v2rayN 退出后裸连** | 退出即撤 TUN，此时开浏览器无任何保护 | ★★★ | 设计如此，靠习惯 |
 | 4 | **豁免进程到不了中国** | `node-direct` 节点的出口访问 baidu/bilibili/qq 全失败 | ★★ | 不可修（节点限制）|
@@ -120,6 +120,71 @@ sudo ./scripts/per-app-routing.py apply --sub sub2
 |---|---|---|
 | WebRTC | AdsPower 关闭 WebRTC | JS 主动去问 STUN 这条路径 |
 | 路由 | SunBrowser 按进程豁免 → 全走节点 | 网页加载国内图片/脚本等**任何**国内方向的连接 |
+
+## 已实施：国内直连 → 日本节点（2026-10-15）
+
+**目的**：让"国内直连"彻底消失 —— 国内方向的流量和 DNS 查询都不再暴露真实中国 IP。
+
+```
+豁免进程 (AdsPower)          其他进程
+   国内 -> cn-via-jp            国内 -> cn-via-jp      ← 都是日本了
+   其他 -> node-direct          其他 -> proxy (住宅)   ← Claude 侧不变
+
+cn-via-jp = 日本CN2-3 (151.242.164.241)
+jp-dns    = DoH, detour=cn-via-jp   ← 国内域名从这里解析
+```
+
+**实测结果**：
+
+| 项 | 结果 |
+|---|---|
+| 国内 IP 回显 | `151.242.164.241` 日本东京 ✓ **不再是真实中国 IP** |
+| 国外出口 | `66.248.154.224` 住宅 ✓ 不受影响 |
+| 国内网站 | baidu/taobao/bilibili/jd ✓；qq 501、163 403（能连上，站点侧限制）|
+| 残留的国内 DNS | 只剩 `geosite-private`（本地域名远端解析不了）与手动 Direct 模式 |
+
+**命令**：
+
+```bash
+# 应用（会先实测两个节点可用性，不通就拒绝）
+sudo ./scripts/per-app-routing.py apply --sub sub2 --cn-node 日本CN2-3
+
+# 只预览
+./scripts/per-app-routing.py plan --sub sub2 --cn-node 日本CN2-3
+```
+
+**回滚**：
+
+```bash
+sudo cp /usr/local/libexec/v2rayn-tun/config.json.bak-<时间戳> \
+        /usr/local/libexec/v2rayn-tun/config.json
+sudo launchctl kickstart -k system/com.local.v2rayn-tun
+```
+
+### 实施中踩的坑
+
+**① sing-box 1.14 移除了旧的 DNS server 格式**
+
+第一版用了 `address` 字段，直接启动失败：
+
+```
+dns.servers[4]: legacy DNS server formats are deprecated in sing-box 1.12.0
+and removed in sing-box 1.14.0
+```
+
+正确形状（照抄本机已在用的 `remote-dns-1`）：
+
+```json
+{ "type": "https", "tag": "jp-dns", "server": "cloudflare-dns.com",
+  "path": "/dns-query", "domain_resolver": "hosts-dns", "detour": "cn-via-jp" }
+```
+
+**② 脚本是"先写文件、再校验"，校验失败时文件已经写坏**
+
+失败后守护仍在跑内存里的旧配置，网络看起来正常 —— **但只要守护重启就会起不来**。
+这次靠"配置改动时间晚于 sing-box 启动时间"发现了它。
+
+**改进方向**：校验应发生在写入之前（写到临时文件校验通过再 mv）。
 
 ## 复检命令
 
