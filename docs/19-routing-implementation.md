@@ -271,12 +271,19 @@ TCP 后立刻断开。浏览器打不开国内服务器上的服务，也是同�
 **原因**：sing-box 是**按 IP 的 `geoip-cn` 判定**国内方向的，没有域名可匹配。
 所以域名清单（`extra-direct.txt`）对它无效，必须按 IP 放行。
 
-**改法**：第二份清单，一行一个 IP 或 CIDR：
+**改法（推荐：自动扫描 `~/.ssh/config`）**：
 
 ```bash
-echo "1.92.76.152" >> ~/.v2rayn-tun/extra-direct-ip.txt
+./scripts/ssh-hosts-direct.sh            # 扫描并列出哪些是中国 IP
+./scripts/ssh-hosts-direct.sh --write    # 写进清单
+./scripts/ssh-hosts-direct.sh --list     # 看当前清单
 sudo ./scripts/per-app-routing.py apply --sub sub2 --cn-node 日本CN2-3
 ```
+
+它会解析每个 Host 的 HostName、查归属地，把**中国境内**的加进清单，
+并自动跳过内网地址（`10.x` 之类本来就直连）。
+
+**手工加也行**：`~/.v2rayn-tun/extra-direct-ip.txt`，一行一个 IP 或 CIDR。
 
 生成 `route.rules[N] direct <- ["1.92.76.152/32"]`，插在 `geoip-cn` 之前。
 
@@ -286,6 +293,15 @@ sudo ./scripts/per-app-routing.py apply --sub sub2 --cn-node 日本CN2-3
 |---|---|
 | 加之前 | `Connection closed by 1.92.76.152 port 22002` —— 服务端秒断 |
 | 加之后 | `Permission denied (publickey,password)` —— 握手成功，只是没认证 |
+
+**实测（一次加了 4 台）**：
+
+```
+huawei1    1.92.76.152      华为云   ✓ 握手成功
+huawei2    124.71.228.242   华为云   ✓ 握手成功
+h200-jump  152.136.172.95   腾讯云   ✓ 握手成功
+h200       222.29.136.226   北大     ✓ 走到密码提示（跳板后目标机）
+```
 
 **怎么判断是不是这个原因**：服务端"接受 TCP 又立刻断开"，且该 IP 属于国内
 （`ip-api.com` 查是中国机房）—— 基本就是这个。加进 IP 清单立刻见效。
