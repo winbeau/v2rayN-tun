@@ -9,8 +9,8 @@
   例外域名                │                                      │
   (微信/教育/政务 22个) ──┤                                      │──→ direct ──→ 真实网络
                          │                                      │
-  其他国内方向 ──────────┤        sing-box (root LaunchDaemon)  │──→ cn-via-jp ─→ 日本CN2-3
-  (geoip-cn/geosite-cn)  │        TUN: utun*  172.19.0.1        │                151.242.164.241
+  其他国内方向 ──────────┤        sing-box (root LaunchDaemon)  │──→ cn-via-jp ─→ 国内出口节点
+  (geoip-cn/geosite-cn)  │        TUN: utun*  172.19.0.1        │                (当前 selab-reality)
                          │        stack=system  auto_route       │
   国外方向 ──────────────┤        mtu=1500 (可调)                │──→ proxy ──→ 127.0.0.1:10808
   (含 AdsPower 例外进程)  │                                      │              └→ xray ─→ 住宅节点
@@ -22,8 +22,13 @@
 | 目标 | 出站 | 出口 IP | 说明 |
 |---|---|---|---|
 | 例外域名（22 个）| `direct` | 你的真实 IP | 只认国内 IP 的站点，见下 |
-| 其他国内方向 | `cn-via-jp` | `151.242.164.241` 日本 | 不再泄漏真实 IP，DNS 也走这里 |
+| 其他国内方向 | `cn-via-jp` | 国内出口节点¹ | 不再泄漏真实 IP，DNS 也走这里 |
 | 国外方向 | `proxy` → xray → 节点 | `66.248.154.224` 住宅 | Claude 用的就是这条 |
+
+¹ **`cn-via-jp` 只是出站的标签名，不代表它一定是日本节点** —— 节点换掉后
+标签保留，因为它被 `jp-dns` 的 detour 和所有国内路由规则引用着。换节点用
+`scripts/switch-cn-node.py`（只替换这一个出站，其余全部保留），详见
+[19 路由实施记录](19-routing-implementation.md#更换国内出口节点日本节点不可用时)。
 
 **豁免进程**（`SunBrowser` 系列）额外有一条：国外目标走 `node-direct`
 （vless 直连住宅节点，绕开 xray）—— 因为 xray 看不到"连接来自哪个进程"，
@@ -41,7 +46,7 @@
 
 | 层 | 组件 | 国内方向 | 角色 |
 |---|---|---|---|
-| 第 1 层 | sing-box（我们的 TUN）| → `cn-via-jp` 日本 | 决定主路径 |
+| 第 1 层 | sing-box（我们的 TUN）| → `cn-via-jp` 国内出口 | 决定主路径 |
 | 第 2 层 | xray（v2rayN 管理）| → `proxy` 节点 | 兜底 |
 
 第 2 层必须选中 **`V4-禁直连(TUN 专用)`** 这个自定义路由配置项

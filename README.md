@@ -133,6 +133,21 @@ sudo ./scripts/setup-routing.sh --cn-node 日本CN2-3
 
 验证：`./scripts/setup-routing.sh --check`
 
+### 更换已有的国内出口节点
+
+日本节点不可用时，可以将现有国内出站换成 v2rayN 数据库里的 `selab-reality`：
+
+```bash
+python3 scripts/switch-cn-node.py plan --node selab-reality
+sudo python3 scripts/switch-cn-node.py apply --node selab-reality
+```
+
+脚本先校验完整配置，并独立测试新节点访问百度、DeepSeek API 和 DoH。
+通过后只替换国内出站，保留现有 DNS、国内路由、直连例外和国外节点；
+备份原配置后原子写入，重启 TUN，再验证实际访问 DeepSeek API。
+`cn-via-jp` / `jp-dns` 是兼容已有规则的历史标签，不代表换完仍使用日本节点。
+此工具不依赖商业订阅中存在 `selab-reality`，也不需要切换 v2rayN 的全局节点。
+
 ## 两个免 sudo 开关
 
 安装后，日常调整不需要密码（最多 5 秒生效）：
