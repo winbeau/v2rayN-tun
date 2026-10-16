@@ -337,6 +337,32 @@ def add_cn_routing(out, cn_link):
     ]))
     changed.append(f"插入微信直连例外到 route.rules[{pos}] ({len(wx_domains)} 个域名)")
 
+    # (e2) IP 例外: 有些目标没有域名(比如自建服务器), 只能按 IP 放行。
+    #      用 ip_cidr 规则, 插在 geoip-cn 之前 -> 命中的直连。
+    #      来源: ~/.v2rayn-tun/extra-direct-ip.txt  一行一个 IP 或 CIDR。
+    ip_file = os.path.expanduser("~/.v2rayn-tun/extra-direct-ip.txt")
+    direct_ips = []
+    if os.path.exists(ip_file):
+        try:
+            with open(ip_file, encoding="utf-8") as f:
+                for line in f:
+                    t = line.split("#")[0].strip()
+                    if not t:
+                        continue
+                    direct_ips.append(t if "/" in t else t + "/32")
+        except OSError:
+            pass
+    if direct_ips:
+        rr2 = out.setdefault("route", {}).setdefault("rules", [])
+        rr2[:] = [r for r in rr2
+                  if not (r.get("ip_cidr") == direct_ips and r.get("outbound") == "direct")]
+        p2 = next((i for i, r in enumerate(rr2) if r.get("outbound") == CN_TAG), len(rr2))
+        rr2.insert(p2, collections.OrderedDict([
+            ("outbound", "direct"),
+            ("ip_cidr", direct_ips),
+        ]))
+        changed.append(f"IP 例外 {len(direct_ips)} 条 -> route.rules[{p2}]: {direct_ips[:4]}")
+
     dd = out.setdefault("dns", {}).setdefault("rules", [])
     dd[:] = [r for r in dd if not (r.get("domain_suffix") == wx_domains)]
     dpos = next((i for i, r in enumerate(dd) if r.get("server") == CN_DNS_TAG), len(dd))

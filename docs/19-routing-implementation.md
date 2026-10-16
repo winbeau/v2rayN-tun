@@ -260,3 +260,35 @@ sudo ./scripts/per-app-routing.py apply --sub sub2 --cn-node 日本CN2-3
 | 政务 | `gov.cn` `gov.hk` | 工信部等 |
 | 代码托管 | `gitcode.com` `gitcode.net` `csdn.net` | 华为云 IP，实测经日本 TLS 被重置 |
 | 比赛/评测 | `cannjudge.cn` | 华为云 IP，实测经日本 URLError |
+
+---
+
+## 目标是一台服务器（没有域名）时怎么办
+
+**症状**：`ssh user@<国内IP>` 报 `Connection closed by ... port N` —— 服务端接受
+TCP 后立刻断开。浏览器打不开国内服务器上的服务，也是同类。
+
+**原因**：sing-box 是**按 IP 的 `geoip-cn` 判定**国内方向的，没有域名可匹配。
+所以域名清单（`extra-direct.txt`）对它无效，必须按 IP 放行。
+
+**改法**：第二份清单，一行一个 IP 或 CIDR：
+
+```bash
+echo "1.92.76.152" >> ~/.v2rayn-tun/extra-direct-ip.txt
+sudo ./scripts/per-app-routing.py apply --sub sub2 --cn-node 日本CN2-3
+```
+
+生成 `route.rules[N] direct <- ["1.92.76.152/32"]`，插在 `geoip-cn` 之前。
+
+**实测对照**：
+
+| | 结果 |
+|---|---|
+| 加之前 | `Connection closed by 1.92.76.152 port 22002` —— 服务端秒断 |
+| 加之后 | `Permission denied (publickey,password)` —— 握手成功，只是没认证 |
+
+**怎么判断是不是这个原因**：服务端"接受 TCP 又立刻断开"，且该 IP 属于国内
+（`ip-api.com` 查是中国机房）—— 基本就是这个。加进 IP 清单立刻见效。
+
+⚠️ **只加你确实需要的具体 IP，不要加整段 CIDR**。写成 `1.92.76.0/24` 就等于
+把整个网段放回直连了，"国内走日本"的保护在那里就没了。
