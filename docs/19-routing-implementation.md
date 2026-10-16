@@ -238,12 +238,15 @@ IP、同一个网关，只是断开重连。那不叫切网，TUN 全程没消�
 | 失败 | 失败 | 站点问题或 DNS |
 | 成功 | — | 不是路由问题 |
 
-**加例外**：改 `scripts/per-app-routing.py` 的 `wx_domains`（写根域名即可，
-子域自动匹配），然后：
+**加例外**：不用改脚本，追加到外置清单即可（一行一个根域名，子域自动匹配）：
 
 ```bash
+echo "example.cn" >> ~/.v2rayn-tun/extra-direct.txt
 sudo ./scripts/per-app-routing.py apply --sub sub2 --cn-node 日本CN2-3
 ```
+
+脚本内置的那批（腾讯/教育/政务/代码托管）在 `per-app-routing.py` 的
+`wx_domains` 里；外置文件是给它**追加**用的。
 
 **⚠️ 不要加 `com.cn` / `org.cn` 这类大范围后缀** —— 会把大量商业站点也放回直连,
 "国内走日本"就白做了。判断标准只有一个：**这个站是不是中国的机构/服务**。
@@ -256,3 +259,4 @@ sudo ./scripts/per-app-routing.py apply --sub sub2 --cn-node 日本CN2-3
 | 教育网 | `edu.cn` `ac.cn` `chsi.com.cn` | 清华/北大/学信网等有国内访问控制 |
 | 政务 | `gov.cn` `gov.hk` | 工信部等 |
 | 代码托管 | `gitcode.com` `gitcode.net` `csdn.net` | 华为云 IP，实测经日本 TLS 被重置 |
+| 比赛/评测 | `cannjudge.cn` | 华为云 IP，实测经日本 URLError |

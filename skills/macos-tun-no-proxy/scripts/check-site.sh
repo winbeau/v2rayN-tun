@@ -36,7 +36,11 @@ for h in "${HOSTS[@]}"; do
     # 直连
     b=$(curl -s -o /dev/null --interface en0 --max-time 15 \
         -w '%{http_code}/%{time_total}s' "https://$h" 2>/dev/null || echo "000/-")
-    ac=${a%%/*}; bc=${b%%/*}
+    # a/b 形如 "200/1.23s"; 取状态码时先掐掉时间部分, 否则会粘在一起
+    ac=$(echo "$a" | cut -d/ -f1 | tr -dc '0-9')
+    bc=$(echo "$b" | cut -d/ -f1 | tr -dc '0-9')
+    [ -z "$ac" ] && ac=000
+    [ -z "$bc" ] && bc=000
     if [ "$ac" = "000" ] && [ "$bc" != "000" ]; then
         v="★ 只认国内 IP -> 建议加例外"; VERDICT+=("$h")
     elif [ "$ac" = "000" ] && [ "$bc" = "000" ]; then
@@ -46,7 +50,7 @@ for h in "${HOSTS[@]}"; do
     else
         v="?"
     fi
-    printf "  %-26s %-22s %-22s %s\n" "$h" "$a" "$b" "$v"
+    printf "  %-26s %-20s %-20s %s\n" "$h" "$a" "$b" "$v"
 done
 
 echo

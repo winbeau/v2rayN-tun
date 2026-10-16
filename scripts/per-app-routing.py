@@ -308,7 +308,25 @@ def add_cn_routing(out, cn_link):
         "gov.cn", "gov.hk",
         # ── 代码托管 ──
         "gitcode.com", "gitcode.net", "csdn.net",
+        # ── 比赛/评测平台 ──
+        "cannjudge.cn",
     ]
+
+    # 外置追加清单: 不用改脚本就能加域名。
+    # 一行一个根域名(# 开头是注释), 例如:
+    #     echo "example.cn" >> ~/.v2rayn-tun/extra-direct.txt
+    # 然后重新 apply 即可。
+    extra_file = os.path.expanduser("~/.v2rayn-tun/extra-direct.txt")
+    if os.path.exists(extra_file):
+        try:
+            with open(extra_file, encoding="utf-8") as f:
+                for line in f:
+                    d = line.split("#")[0].strip()
+                    if d and d not in wx_domains:
+                        wx_domains.append(d)
+                        changed.append(f"外置清单追加: {d}")
+        except OSError:
+            pass
     rr = out.setdefault("route", {}).setdefault("rules", [])
     rr[:] = [r for r in rr
              if not (r.get("domain_suffix") == wx_domains and r.get("outbound") == "direct")]
