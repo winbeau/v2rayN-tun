@@ -28,7 +28,7 @@
 ¹ **`cn-via-jp` 只是出站的标签名，不代表它一定是日本节点** —— 节点换掉后
 标签保留，因为它被 `jp-dns` 的 detour 和所有国内路由规则引用着。换节点用
 `scripts/switch-cn-node.py`（只替换这一个出站，其余全部保留），详见
-[19 路由实施记录](19-routing-implementation.md#更换国内出口节点日本节点不可用时)。
+[19 路由实施记录](19-routing-implementation.md)。
 
 **豁免进程**（`SunBrowser` 系列）额外有一条：国外目标走 `node-direct`
 （vless 直连住宅节点，绕开 xray）—— 因为 xray 看不到"连接来自哪个进程"，
