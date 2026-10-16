@@ -306,6 +306,8 @@ def add_cn_routing(out, cn_link):
         "edu.cn", "ac.cn", "chsi.com.cn", "chsi.cn",
         # ── 政务 ── (含工信部 miit.gov.cn)
         "gov.cn", "gov.hk",
+        # ── 代码托管 ──
+        "gitcode.com", "gitcode.net", "csdn.net",
     ]
     rr = out.setdefault("route", {}).setdefault("rules", [])
     rr[:] = [r for r in rr
