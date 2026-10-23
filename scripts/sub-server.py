@@ -81,6 +81,42 @@ CACHE_TTL = int(os.environ.get("SUB_CACHE_TTL", "60"))
 _lock = threading.Lock()
 # 每条订阅独立缓存 —— 两条线路的更新节奏互不影响
 _cache = {}          # name -> {"at": float, "links": list, "error": str|None}
+
+# 磁盘缓存 —— 见下方 _load_disk / _save_disk 的说明
+_cache_dir = os.path.expanduser("~/.v2rayn-tun/subcache")
+
+
+def _disk_path(name):
+    return os.path.join(_cache_dir, f"{name}.txt")
+
+
+def _save_disk(name, links):
+    """把成功拉到的节点列表落到磁盘。
+
+    为什么需要: 内存缓存在进程重启后是空的。如果重启后第一次上游拉取就失败,
+    get_links 会返回 502 —— 而 v2rayN 收到 502 会把整个订阅组的节点清空,
+    用户看到的就是"组里的东西没了"。磁盘缓存让重启后仍能兜住这一下。
+    """
+    if not links:
+        return
+    try:
+        os.makedirs(_cache_dir, exist_ok=True)
+        tmp = _disk_path(name) + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write("\n".join(links))
+        os.replace(tmp, _disk_path(name))
+    except OSError:
+        pass
+
+
+def _load_disk(name):
+    """进程启动后第一次用到某个订阅时，把磁盘缓存读进内存。"""
+    try:
+        with open(_disk_path(name), encoding="utf-8") as f:
+            links = [l.strip() for l in f if l.strip()]
+        return links
+    except OSError:
+        return []
 _fetching = {}       # name -> threading.Event
 
 
@@ -122,7 +158,12 @@ def _do_fetch(name="sub"):
 
 def _slot(name):
     with _lock:
-        return _cache.setdefault(name, {"at": 0.0, "links": [], "error": None})
+        if name not in _cache:
+            disk = _load_disk(name)
+            _cache[name] = {"at": 0.0, "links": disk, "error": None}
+            if disk:
+                print(f"    [cache] {name}: 从磁盘恢复 {len(disk)} 个节点", file=sys.stderr)
+        return _cache[name]
 
 
 def get_links(name="sub", force=False, block=True):
@@ -146,6 +187,7 @@ def get_links(name="sub", force=False, block=True):
                 links = _do_fetch(name)
                 with _lock:
                     slot.update(at=time.time(), links=links, error=None)
+                    _save_disk(name, links)
             except Exception as e:
                 with _lock:
                     slot["error"] = str(e)
@@ -164,6 +206,7 @@ def get_links(name="sub", force=False, block=True):
         links = _do_fetch(name)
         with _lock:
             slot.update(at=time.time(), links=links, error=None)
+            _save_disk(name, links)
         return links, None
     except Exception as e:
         with _lock:

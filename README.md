@@ -148,6 +148,13 @@ sudo python3 scripts/switch-cn-node.py apply --node selab-reality
 `cn-via-jp` / `jp-dns` 是兼容已有规则的历史标签，不代表换完仍使用日本节点。
 此工具不依赖商业订阅中存在 `selab-reality`，也不需要切换 v2rayN 的全局节点。
 
+同名节点存在于多个分组时，用 `--group` 精确指定：
+
+```bash
+python3 scripts/switch-cn-node.py plan --group 2-geneva --node '(赠送)日本CN2专线娱乐节点'
+sudo python3 scripts/switch-cn-node.py apply --group 2-geneva --node '(赠送)日本CN2专线娱乐节点'
+```
+
 ## 两个免 sudo 开关
 
 安装后，日常调整不需要密码（最多 5 秒生效）：

@@ -29,13 +29,20 @@ def user_home():
     return Path(pwd.getpwuid(int(os.environ.get('SUDO_UID', os.getuid()))).pw_dir)
 
 
-def load_node(name):
+def load_node(name, group=None):
     db = user_home() / 'Library/Application Support/v2rayN/guiConfigs/guiNDB.db'
     with sqlite3.connect(db.as_uri() + '?mode=ro', uri=True) as con:
         con.row_factory = sqlite3.Row
-        rows = con.execute('SELECT * FROM ProfileItem WHERE Remarks = ?', (name,)).fetchall()
+        query = ('SELECT p.* FROM ProfileItem p '
+                 'LEFT JOIN SubItem s ON p.Subid = s.Id WHERE p.Remarks = ?')
+        params = [name]
+        if group is not None:
+            query += ' AND s.Remarks = ?'
+            params.append(group)
+        rows = con.execute(query, params).fetchall()
     if len(rows) != 1:
-        raise RuntimeError(f'需要唯一的同名节点，实际找到 {len(rows)} 个：{name}')
+        scope = f'（分组：{group}）' if group is not None else '（可用 --group 指定分组）'
+        raise RuntimeError(f'需要唯一的同名节点，实际找到 {len(rows)} 个：{name}{scope}')
     p = dict(rows[0])
     if p.get('ConfigType') != 5 or p.get('StreamSecurity') != 'reality':
         raise RuntimeError('仅支持 VLESS REALITY 节点')
@@ -124,6 +131,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=['plan', 'apply'])
     parser.add_argument('--node', default='selab-reality')
+    parser.add_argument('--group', help='按 v2rayN 分组名称精确匹配，避免选中其他组的同名节点')
     args = parser.parse_args()
     if args.action == 'apply' and os.geteuid() != 0:
         raise RuntimeError('apply 需要 sudo；plan 不需要管理员权限')
@@ -132,12 +140,14 @@ def main():
     indices = [i for i, ob in enumerate(cfg['outbounds']) if ob.get('tag') == CN_TAG]
     if len(indices) != 1:
         raise RuntimeError('需要唯一的现有 cn-via-jp 出站；请先配置基础分流')
-    ob = load_node(args.node)
+    ob = load_node(args.node, args.group)
     candidate = copy.deepcopy(cfg)
     old = candidate['outbounds'][indices[0]]
     candidate['outbounds'][indices[0]] = ob
     print(f'国内出站：{old["server"]}:{old["server_port"]} → '
           f'{args.node} ({ob["server"]}:{ob["server_port"]})', flush=True)
+    if args.group is not None:
+        print(f'节点分组：{args.group}', flush=True)
     print('仅替换该出站；已有 DNS detour 和路由继续引用同一标签。', flush=True)
     # 临时目录同目标目录仅在 apply 时使用，以便最后原子替换。
     with tempfile.TemporaryDirectory(prefix='cn-switch-',

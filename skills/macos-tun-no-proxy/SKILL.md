@@ -162,6 +162,8 @@ sudo python3 scripts/switch-cn-node.py apply --node selab-reality
 `plan` 校验完整配置，独立实测百度、DeepSeek API、DoH，不修改线上配置。
 `apply` 在相同预检通过后备份、原子写入、重启 TUN，并验证 TUN 实际访问 DeepSeek。
 原有 `cn-via-jp` / `jp-dns` 标签保留，已有 DNS detour、路由和直连例外都不变。
+同名节点属于多个分组时，添加 `--group 2-geneva` 等参数，按分组名称精确匹配；
+不指定分组且节点重名时，脚本会拒绝选择，避免切到其他组。
 此场景不使用 `setup-routing.sh` 的历史默认值，否则会再次选择旧日本节点。
 仍遵守上面的 sudo 硬约束；需要密码时，把最终的 apply 命令交给用户执行。
 
