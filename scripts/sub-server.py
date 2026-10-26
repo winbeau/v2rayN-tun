@@ -73,7 +73,12 @@ DEFAULT_URL_FILE = os.path.expanduser("~/.v2rayn-tun/sub-url")
 # 机场修好线路后, 客服会要求"在客户端点更新" —— 如果这里缓存太长,
 # v2rayN 点了更新却拿到旧节点, 会以为"更新没生效", 白白多等一轮。
 # 60 秒足够挡住连点, 又不会让用户误判。
-CACHE_TTL = int(os.environ.get("SUB_CACHE_TTL", "60"))
+CACHE_TTL = int(os.environ.get("SUB_CACHE_TTL", "10"))
+# ↑ 默认 10 秒而不是 60。官方换节点参数(端口/uuid)时不会通知,
+#   而上游是 cache-control: no-store 且没有 ETag/Last-Modified,
+#   没法做条件请求 —— 只能靠"过期得足够快"来逼近"及时感知"。
+#   实测踩过: 端口 443 -> 4561 后, 60 秒窗口内 v2rayN 更新会拿到旧端口,
+#   整条住宅线路就连不上了。订阅更新本来就低频, 多等 1 秒无所谓。
 
 # ⚠️ 锁只在读写缓存时持有, 【绝不覆盖网络请求】。
 # 早先的版本把整段 fetch 包在锁里, 结果 warmup 线程拉取期间所有 HTTP 请求
@@ -205,8 +210,14 @@ def get_links(name="sub", force=False, block=True):
     try:
         links = _do_fetch(name)
         with _lock:
+            previous = list(slot["links"])
             slot.update(at=time.time(), links=links, error=None)
             _save_disk(name, links)
+
+        # 节点参数变了就记一笔 —— 换端口 / 换 uuid 官方不会通知，
+        # 日志里是唯一能看出"什么时候变的"的地方。
+        if previous and previous != links:
+            print(f"    [change] {name}: {len(previous)} -> {len(links)} 个节点")
         return links, None
     except Exception as e:
         with _lock:
@@ -241,7 +252,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if path in ("/sub", "/subscribe") or re.fullmatch(r"/sub[0-9]+", path):
             name = "sub" if path in ("/sub", "/subscribe") else path[1:]
-            links, err = get_links(name=name, block=False)
+            # block=True: 缓存过期就等一次真实拉取。宁可慢 1~2 秒,
+            # 也不要把过期参数交给 v2rayN —— 它会照着写进节点配置。
+            # 拉取失败时 get_links 仍退回上次的好数据, 不会 502。
+            links, err = get_links(name=name, block=True)
             if not links:
                 self._send(f"# 转换失败: {err}\n", code=502)
                 return
