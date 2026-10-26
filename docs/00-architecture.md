@@ -9,8 +9,8 @@
   例外域名                │                                      │
   (微信/教育/政务 22个) ──┤                                      │──→ direct ──→ 真实网络
                          │                                      │
-  其他国内方向 ──────────┤        sing-box (root LaunchDaemon)  │──→ cn-via-jp ─→ 国内出口节点
-  (geoip-cn/geosite-cn)  │        TUN: utun*  172.19.0.1        │                (当前 selab-reality)
+  其他国内方向 ──────────┤        sing-box (root LaunchDaemon)  │──→ cn-via-jp ─→ 直连(当前)
+  (geoip-cn/geosite-cn)  │        TUN: utun*  172.19.0.1        │                (可换成任意节点)
                          │        stack=system  auto_route       │
   国外方向 ──────────────┤        mtu=1500 (可调)                │──→ proxy ──→ 127.0.0.1:10808
   (含 AdsPower 例外进程)  │                                      │              └→ xray ─→ 住宅节点
@@ -22,13 +22,23 @@
 | 目标 | 出站 | 出口 IP | 说明 |
 |---|---|---|---|
 | 例外域名（22 个）| `direct` | 你的真实 IP | 只认国内 IP 的站点，见下 |
-| 其他国内方向 | `cn-via-jp` | 国内出口节点¹ | 不再泄漏真实 IP，DNS 也走这里 |
+| 其他国内方向 | `cn-via-jp` | 直连或任意节点¹ | 当前设为 `direct`；换节点用 switch-cn-node.py |
 | 国外方向 | `proxy` → xray → 节点 | `66.248.154.224` 住宅 | Claude 用的就是这条 |
 
-¹ **`cn-via-jp` 只是出站的标签名，不代表它一定是日本节点** —— 节点换掉后
-标签保留，因为它被 `jp-dns` 的 detour 和所有国内路由规则引用着。换节点用
-`scripts/switch-cn-node.py`（只替换这一个出站，其余全部保留），详见
-[19 路由实施记录](19-routing-implementation.md)。
+¹ **`cn-via-jp` 只是出站的标签名** —— 它现在是 `type: direct`（不连任何节点），
+也可以换成任意节点，标签保持不变，因为它被所有国内路由规则引用着。
+
+```bash
+# 国内直连（当前）
+sudo ./scripts/switch-cn-node.py apply --node direct
+# 换成某个节点
+sudo ./scripts/switch-cn-node.py apply --node selab-reality
+```
+
+详见 [19 路由实施记录](19-routing-implementation.md)。
+
+**⚠️ 节点参数会被官方静默更改**（实测：住宅节点端口从 `443` 改成 `4561`），
+表现为"TCP 通但代理连不上"。排查见 [20](20-node-params-changed.md)。
 
 **豁免进程**（`SunBrowser` 系列）额外有一条：国外目标走 `node-direct`
 （vless 直连住宅节点，绕开 xray）—— 因为 xray 看不到"连接来自哪个进程"，
@@ -147,5 +157,6 @@ tail -f ~/Library/Logs/v2rayn-quitguard.log
 | **性能** | [05 微信卡顿](05-wechat-lag.md) · [06 GitHub 慢](06-github-slow.md) |
 | **节点** | [08 故障排查](08-node-failure-triage.md) · [09 VPS 调优](09-vps-tuning.md) · [10 Reality](10-reality-setup.md) · [11 Hysteria2](11-hysteria2-real-cert.md) |
 | **安全** | [12 Cmd+Q 拦截](12-quit-guard.md) · [13 IP 泄漏防护](13-ip-leak-protection.md) · [16 国内直连泄漏](16-cn-direct-ip-leak.md) · [17 封号检测调研](17-claude-ban-detection-analysis.md) |
+| **运维** | [18 风险登记](18-risk-register.md) · [19 路由实施](19-routing-implementation.md) · [20 节点参数被改](20-node-params-changed.md) |
 | **订阅** | [14 节点 SNI 屏蔽](14-node-sni-blocking.md) · [15 Clash 订阅转换](15-clash-sub-to-v2rayn.md) |
 | **工具** | [toolbox](toolbox.md) |
