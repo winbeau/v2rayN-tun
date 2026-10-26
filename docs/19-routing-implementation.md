@@ -348,3 +348,44 @@ sudo python3 scripts/switch-cn-node.py apply --node selab-reality
 ⚠️ 测这个节点时踩过一个坑：用 `urllib` 的 `socks5h://` 走 sing-box 的
 SOCKS 入站会报 `process connection: invalid argument`，导致**误判成节点不通**。
 手工做 SOCKS5 握手（ATYP=3 域名）就正常。**是测试方法的问题，不是节点的问题。**
+
+---
+
+## 国内改回直连（`--node direct`）
+
+`switch-cn-node.py` 现在支持 `--node direct` —— 不是换节点，而是把
+`cn-via-jp` 这个出站**本身改成 `type: direct`**。所有国内路由继续引用
+同一个标签，只是它不再连任何节点。
+
+```bash
+python3 scripts/switch-cn-node.py plan  --node direct
+sudo python3 scripts/switch-cn-node.py apply --node direct
+```
+
+**它同时改 DNS**：`jp-dns` 是 `https://cloudflare-dns.com`，直连模式下会
+直接去问它，国内既慢又可能不通 —— 所以把走 `jp-dns` 的规则全部改回
+`direct-dns-1`（`119.29.29.29`）。
+
+**实测（2026-10-25）**：
+
+| | 走节点（selab / 日本CN2-3） | 直连 |
+|---|---|---|
+| 国内回显 | 23.165.40.14 / 45.202.245.223 | **124.117.210.115**（真实 IP）|
+| baidu | 2.10s | **0.26s** |
+| taobao | 1.48s | **0.19s** |
+| bilibili | 1.02s | **0.21s** |
+| jd | 1.02s | **0.06s** |
+| 国外出口 | 66.248.154.224 住宅 | 66.248.154.224 住宅 ✓ 不变 |
+
+**代价**：国内方向的流量重新以真实 IP 出去 —— 网页只要加载一个国内域名的
+资源就能据此判断地理位置。这是明确的选择，不是回归。
+
+**回滚**：`apply --node <节点名>` 换回任意节点即可，或用
+`config.json.bak-cn-<时间戳>` 恢复。
+
+### 顺带修的一个权限问题
+
+`switch-cn-node.py` 原来用 `chmod(0o600)` 写配置，导致仓库里以普通用户
+身份运行的工具（`stealth-mode.sh status`、`check-site.sh`、以及本脚本的
+`plan`）全部 `PermissionError`。改成 644 —— 文件在 `/usr/local/libexec`
+下是 root 所有，普通用户改不了，读没问题。

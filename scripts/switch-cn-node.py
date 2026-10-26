@@ -29,7 +29,13 @@ def user_home():
     return Path(pwd.getpwuid(int(os.environ.get('SUDO_UID', os.getuid()))).pw_dir)
 
 
+DIRECT_OUTBOUND = {'type': 'direct', 'tag': CN_TAG, 'connect_timeout': '30s'}
+
+
 def load_node(name, group=None):
+    # 特殊值：不连节点，直连出去
+    if name == 'direct':
+        return dict(DIRECT_OUTBOUND)
     db = user_home() / 'Library/Application Support/v2rayN/guiConfigs/guiNDB.db'
     with sqlite3.connect(db.as_uri() + '?mode=ro', uri=True) as con:
         con.row_factory = sqlite3.Row
@@ -69,7 +75,7 @@ def load_node(name, group=None):
 
 def write_json(path, cfg):
     with path.open('w', encoding='utf-8') as f:
-        os.fchmod(f.fileno(), 0o600)
+        os.fchmod(f.fileno(), 0o644)
         json.dump(cfg, f, indent=2, ensure_ascii=False)
         f.write('\n')
 
@@ -109,11 +115,16 @@ def probe(ob, directory):
                 break
             except OSError:
                 time.sleep(0.1)
-        for url, accepted in [
-            ('https://www.baidu.com', {'200'}),
-            ('https://api.deepseek.com/models', {'200', '401'}),
-            ('https://cloudflare-dns.com/dns-query?dns=AAABAAABAAAAAAAAB2V4YW1wbGUDY29tAAABAAE', {'200'}),
-        ]:
+        targets = [
+                ('https://www.baidu.com', {'200'}),
+                ('https://api.deepseek.com/models', {'200', '401'}),
+        ]
+        # 直连时不去测 Cloudflare DoH —— 国内直连大概率不通，那不是故障
+        if ob.get("type") != "direct":
+            targets.append(
+                ("https://cloudflare-dns.com/dns-query?dns=AAABAAABAAAAAAAAB2V4YW1wbGUDY29tAAABAAE",
+                 {"200"}))
+        for url, accepted in targets:
             code = fetch(url, port)
             print(f'  节点实测 {url.split("?")[0]}: HTTP {code}', flush=True)
             if code not in accepted:
@@ -144,8 +155,23 @@ def main():
     candidate = copy.deepcopy(cfg)
     old = candidate['outbounds'][indices[0]]
     candidate['outbounds'][indices[0]] = ob
-    print(f'国内出站：{old["server"]}:{old["server_port"]} → '
-          f'{args.node} ({ob["server"]}:{ob["server_port"]})', flush=True)
+    if ob.get("type") == "direct":
+        print("国内出站：→ 直连（不经过任何节点）", flush=True)
+    else:
+        print(f'国内出站：{old.get("server")}:{old.get("server_port")} → '
+              f'{args.node} ({ob["server"]}:{ob["server_port"]})', flush=True)
+
+    # direct 时把走 jp-dns 的域名改回 direct-dns-1：
+    # jp-dns 是 https://cloudflare-dns.com，direct 模式下会直连去问它，
+    # 国内既慢又可能不通。
+    if ob.get("type") == "direct":
+        n = 0
+        for rule in candidate.get("dns", {}).get("rules", []):
+            if rule.get("server") == "jp-dns":
+                rule["server"] = "direct-dns-1"
+                n += 1
+        if n:
+            print(f"DNS：{n} 条规则 jp-dns → direct-dns-1", flush=True)
     if args.group is not None:
         print(f'节点分组：{args.group}', flush=True)
     print('仅替换该出站；已有 DNS detour 和路由继续引用同一标签。', flush=True)
@@ -165,9 +191,9 @@ def main():
         stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
         backup = BASE / f'config.json.bak-cn-{stamp}'
         shutil.copy2(LIVE, backup)
-        backup.chmod(0o600)
+        backup.chmod(0o644)
         os.chown(path, 0, 0)
-        path.chmod(0o600)
+        path.chmod(0o644)
         os.replace(path, LIVE)
         restart = ['launchctl', 'kickstart', '-k', 'system/com.local.v2rayn-tun']
         if subprocess.run(restart).returncode:
