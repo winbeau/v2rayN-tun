@@ -39,7 +39,12 @@ def running():
     found = []
     for pattern, label in WATCH:
         try:
-            out = subprocess.run(["pgrep", "-f", pattern],
+            # ★ 必须用 -x（精确匹配进程名），不能用 -f（匹配整条命令行）★
+            #   -f 会把任何命令行里含这个词的进程都算进来 —— 包括
+            #   "echo SunBrowser" 这种。实测踩过: 我自己的诊断脚本
+            #   因为命令行里带了 SunBrowser/AdsPower/claude 三个词，
+            #   被自己判成"客户端在跑"，把正常的切换全拦住了。
+            out = subprocess.run(["pgrep", "-x", pattern],
                                  capture_output=True, text=True, timeout=3).stdout.split()
         except (OSError, subprocess.SubprocessError):
             continue

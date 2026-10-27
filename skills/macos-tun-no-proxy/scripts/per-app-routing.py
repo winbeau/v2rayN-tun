@@ -470,6 +470,9 @@ def main():
     ap.add_argument("--sub", default="sub2",
                     help="用哪条订阅的住宅节点 (默认 sub2; 本地服务里 /sub 和 /sub2)")
     ap.add_argument("--skip-check", action="store_true", help="跳过节点可用性预检 (不推荐)")
+    ap.add_argument("--force", action="store_true",
+                    help="跳过「客户端在跑」检查。apply 会重启 sing-box，"
+                         "期间 TUN 被撤掉 1~3 秒，正在进行的请求会用真实 IP 出去。")
     ap.add_argument("--cn-node", metavar="关键词", default=None,
                     help='把"国内直连"整体改成走该节点 (含 DNS)。例如 --cn-node 日本CN2-3')
     args = ap.parse_args()
