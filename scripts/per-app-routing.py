@@ -475,7 +475,15 @@ def main():
     args = ap.parse_args()
 
     if args.action == "verify":
+    pass
         return verify()
+
+    # ★ apply 会重启 sing-box，TUN 被撤掉 1~3 秒，那段时间走直连。
+    #   先确认 AdsPower 里的 Claude、终端里的 claude 没在跑。
+    if args.action == "apply":
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from _clients_guard import ensure_idle
+        ensure_idle(force=getattr(args, "force", False))
 
     base = LIVE if args.action == "apply" else (LIVE if os.path.exists(LIVE) else SRC)
     cfg = load(base)
