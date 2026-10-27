@@ -143,9 +143,20 @@ def main():
     parser.add_argument('action', choices=['plan', 'apply'])
     parser.add_argument('--node', default='selab-reality')
     parser.add_argument('--group', help='按 v2rayN 分组名称精确匹配，避免选中其他组的同名节点')
+    parser.add_argument('--force', action='store_true',
+                        help='跳过「客户端在跑」检查。切换会重启 sing-box，'
+                             '期间 TUN 被撤掉 1~3 秒，正在进行的请求会用真实 IP 出去。')
     args = parser.parse_args()
     if args.action == 'apply' and os.geteuid() != 0:
         raise RuntimeError('apply 需要 sudo；plan 不需要管理员权限')
+
+    # ★ 切换会重启 sing-box，TUN 会被撤掉 1~3 秒，那段时间流量走直连。
+    #   如果 AdsPower 里的 Claude 或终端里的 claude 正在跑，请求就会用真实
+    #   IP 出去。所以 apply 之前必须先确认它们没在运行。
+    if args.action == 'apply':
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from _clients_guard import ensure_idle
+        ensure_idle(force=args.force)
     original = LIVE.read_bytes()
     cfg = json.loads(original)
     indices = [i for i, ob in enumerate(cfg['outbounds']) if ob.get('tag') == CN_TAG]
