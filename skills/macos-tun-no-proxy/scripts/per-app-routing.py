@@ -475,7 +475,6 @@ def main():
     args = ap.parse_args()
 
     if args.action == "verify":
-    pass
         return verify()
 
     # ★ apply 会重启 sing-box，TUN 被撤掉 1~3 秒，那段时间走直连。
