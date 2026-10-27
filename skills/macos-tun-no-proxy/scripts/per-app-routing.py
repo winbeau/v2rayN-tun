@@ -408,6 +408,54 @@ def fetch_residential_node(source="sub2"):
     return links[0], urllib.parse.unquote(urllib.parse.urlparse(links[0]).fragment)
 
 
+def add_loop_break(out, node_ips):
+    """把节点 IP 从 TUN 的覆盖路由里排除，并加一条"目标=节点 -> direct"的规则。
+
+    ⚠️ 这是个真 bug 的修复，不要删：
+
+    sing-box 的 auto_route 会往系统里加 1/8、2/7 … 128/1 这些覆盖路由，
+    把【所有】流量都指向 utun。于是：
+
+        xray 连节点 -> 被覆盖路由抓进 TUN -> sing-box 收到
+          -> 匹配"目标=节点 -> direct" -> direct 出站再连节点
+          -> 又被覆盖路由抓进 TUN -> ... 无限环
+
+    实测症状：约 3.0 秒固定超时、成功率 20-40%、到节点堆积几十个僵死连接。
+    `bind_interface: en0` 在 macOS 上不生效，必须在路由层排除。
+
+    route_exclude_address 会让 auto_route 给这些地址加更具体的旁路路由，
+    使它们走物理网卡而不是 utun。
+    """
+    changed = []
+
+    # (a) TUN 入站: 排除节点 IP 的路由
+    inbounds = out.get("inbounds") or []
+    tun = next((i for i in inbounds if i.get("type") == "tun"), None)
+    if tun is not None:
+        excl = list(tun.get("route_exclude_address") or [])
+        for ip in node_ips:
+            cidr = ip if "/" in ip else ip + "/32"
+            if cidr not in excl:
+                excl.append(cidr)
+        if excl != (tun.get("route_exclude_address") or []):
+            tun["route_exclude_address"] = excl
+            changed.append(f"TUN route_exclude_address += {node_ips}  (破环)")
+
+    # (b) 路由规则: 目标=节点 -> direct（双保险）
+    cidrs = [ip if "/" in ip else ip + "/32" for ip in node_ips]
+    rules = out.setdefault("route", {}).setdefault("rules", [])
+    rules[:] = [r for r in rules
+                if not (r.get("outbound") == "direct" and r.get("ip_cidr") == cidrs)]
+    pos = next((i for i, r in enumerate(rules)
+                if r.get("action") == "hijack-dns"), len(rules))
+    rules.insert(pos, collections.OrderedDict([
+        ("outbound", "direct"),
+        ("ip_cidr", cidrs),
+    ]))
+    changed.append(f"route.rules[{pos}] 目标节点 -> direct  (破环, 双保险)")
+    return changed
+
+
 def patch(cfg, node_link):
     """返回 (新配置, 改动说明列表)"""
     out = json.loads(json.dumps(cfg))
@@ -504,6 +552,16 @@ def main():
         print(f"  ✓ 节点可用 ({info})", file=sys.stderr)
 
     newcfg, changed = patch(cfg, node_link)
+
+    # ★ 破环: 把节点 IP 从 TUN 路由里排除 ★
+    node_ips = []
+    for o in newcfg.get("outbounds", []):
+        if o.get("type") == "vless" and o.get("server"):
+            srv = o["server"]
+            if srv.replace(".", "").isdigit() and srv not in node_ips:
+                node_ips.append(srv)
+    if node_ips:
+        changed += add_loop_break(newcfg, node_ips)
 
     # 可选: 把国内直连整体换成走某个节点
     if args.cn_node:
