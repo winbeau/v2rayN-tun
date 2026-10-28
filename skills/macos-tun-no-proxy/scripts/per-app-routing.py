@@ -553,8 +553,18 @@ def main():
 
     newcfg, changed = patch(cfg, node_link)
 
-    # ★ 破环: 把节点 IP 从 TUN 路由里排除 ★
+    # ★ 破环: 把【所有】节点 IP 从 TUN 路由里排除 ★
+    #   只排当前那个不够 —— 在 v2rayN 里换节点后环路会立刻回来（实测踩过）。
     node_ips = []
+    try:
+        import sqlite3
+        db = os.path.expanduser("~/Library/Application Support/v2rayN/guiConfigs/guiNDB.db")
+        with sqlite3.connect(f"file:{db}?mode=ro", uri=True) as con:
+            for (addr,) in con.execute("select distinct Address from ProfileItem"):
+                if addr and addr.replace(".", "").isdigit() and addr not in node_ips:
+                    node_ips.append(addr)
+    except Exception:
+        pass
     for o in newcfg.get("outbounds", []):
         if o.get("type") == "vless" and o.get("server"):
             srv = o["server"]
