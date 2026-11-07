@@ -570,6 +570,13 @@ def main():
             srv = o["server"]
             if srv.replace(".", "").isdigit() and srv not in node_ips:
                 node_ips.append(srv)
+    # 用户清单（校园网 / WireGuard 段等）也要并进来
+    excl_file = os.path.expanduser("~/.v2rayn-tun/tun-exclude.txt")
+    if os.path.exists(excl_file):
+        for line in open(excl_file, encoding="utf-8"):
+            line = line.split("#")[0].strip()
+            if line and line not in node_ips:
+                node_ips.append(line)
     if node_ips:
         changed += add_loop_break(newcfg, node_ips)
 

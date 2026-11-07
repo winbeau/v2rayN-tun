@@ -81,14 +81,21 @@ if not ips:
 
 t = d['inbounds'][0]
 old = set(t.get('route_exclude_address') or [])
-t['route_exclude_address'] = ips
+
+# ★ 追加, 不是覆盖 ★
+#   早先这里是 t['route_exclude_address'] = ips —— 会把用户清单里的
+#   10.0.0.0/8（校园网）和 192.168.99.0/24（WireGuard 段）一起冲掉，
+#   导致校园网和 NAS 隧道又被 TUN 吃走。
+merged = sorted(old | set(ips))
+t['route_exclude_address'] = merged
 added = sorted(set(ips) - old)
-print(f"  排除 {len(ips)} 个节点 IP" + (f"（新增 {len(added)} 个: {added}）" if added else "（无变化）"))
+print(f"  排除 {len(merged)} 条 (节点 {len(ips)} + 保留 {len(old - set(ips))})"
+      + (f"，新增节点 {len(added)} 个" if added else ""))
 
 rules = d['route']['rules']
 rules[:] = [r for r in rules if not (r.get('outbound') == 'direct' and r.get('ip_cidr') == ips)]
 pos = next((i for i, r in enumerate(rules) if r.get('action') == 'hijack-dns'), len(rules))
-rules.insert(pos, collections.OrderedDict([("outbound", "direct"), ("ip_cidr", ips)]))
+rules.insert(pos, collections.OrderedDict([("outbound", "direct"), ("ip_cidr", merged)]))
 print(f"  rules[{pos}] = 目标任一节点 -> direct")
 
 tmp = LIVE + '.new'

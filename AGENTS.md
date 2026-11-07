@@ -132,6 +132,13 @@
     连着切了好几次节点，每次都是一个直连窗口。
     已固化成 `scripts/_clients_guard.py`，`switch-cn-node.py` 与
     `per-app-routing.py` 的 apply 都会先调它；确实要切加 `--force`。
+28. **★★ TUN 起来先用 `route get` 验一遍内网。★★**
+    `auto_route` 的 `8.0.0.0/5` 覆盖路由把 `10.0.0.0/8` 整个吃进去了 ——
+    校园网、WireGuard 对端、路由器后台全部走 utun。
+    尤其 WireGuard 对端被吃掉后，它还能通纯属 `auto_detect_interface`
+    兜着，代理一挂隧道就断。
+    排除用 `inbounds[tun].route_exclude_address`（`bind_interface` 在 macOS
+    上无效），清单放 `~/.v2rayn-tun/tun-exclude.txt`，由守护每次启动合并。
 
 ## 常用命令
 

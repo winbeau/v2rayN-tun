@@ -36,6 +36,8 @@ KS_FLAG="__USER_HOME__/Library/Application Support/v2rayN/killswitch-always"
 # __USER_HOME__ 由 install.sh 在安装时替换为实际用户主目录
 FLAG="__USER_HOME__/Library/Application Support/v2rayN/tun-disabled"
 MTU_FLAG="__USER_HOME__/Library/Application Support/v2rayN/tun-mtu"
+# TUN 排除清单（用户可编辑）。校园网 10.0.0.0/8 和 WireGuard 段都在这里。
+EXCLUDE_FILE="__USER_HOME__/.v2rayn-tun/tun-exclude.txt"
 
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >>"$LOG"; }
 
@@ -60,6 +62,54 @@ proxy_up() {
 }
 
 # 依据用户开关生成实际使用的配置; 校验不过就回退
+# 把 $EXCLUDE_FILE 里的网段合并进 route_exclude_address，并保证
+# 「目标=排除网段 -> direct」的规则存在。
+#
+# ⚠️ 必须每次启动都做，不能只在装的时候写一次：
+#    fix-loop.sh / per-app-routing.py 会重写 route_exclude_address，
+#    只留节点 IP。如果不在这里兜底，排除清单会被冲掉，
+#    校园网和 WireGuard 就又被 TUN 吃走了。
+apply_excludes() {
+    [ -f "$RUN_CONF" ] || return 0
+    /usr/bin/python3 - "$RUN_CONF" "$EXCLUDE_FILE" <<'PYEOF' 2>/dev/null || true
+import json, os, sys, collections
+
+conf, excl_file = sys.argv[1], sys.argv[2]
+d = json.load(open(conf, encoding="utf-8"), object_pairs_hook=collections.OrderedDict)
+
+tun = next((i for i in d.get("inbounds", []) if i.get("type") == "tun"), None)
+if tun is None:
+    raise SystemExit(0)
+
+# 现有排除（来自 config.json 的节点 IP）
+excl = list(tun.get("route_exclude_address") or [])
+
+# 加上用户清单
+if os.path.exists(excl_file):
+    for line in open(excl_file, encoding="utf-8"):
+        line = line.split("#")[0].strip()
+        if line and line not in excl:
+            excl.append(line)
+
+tun["route_exclude_address"] = excl
+
+# 规则层双保险：目标在排除网段内 -> direct
+# 注意: 不要往规则里塞自定义字段（比如 _tun_excl）—— sing-box 会拒绝未知键，
+#       check 失败后守护会回退到未合并的配置，规则就白加了。实测踩过。
+rules = d.setdefault("route", {}).setdefault("rules", [])
+target = set(excl)
+rules[:] = [r for r in rules
+            if not (r.get("outbound") == "direct" and set(r.get("ip_cidr") or []) == target)]
+pos = next((i for i, r in enumerate(rules) if r.get("action") == "hijack-dns"), len(rules))
+rules.insert(pos, collections.OrderedDict([
+    ("outbound", "direct"),
+    ("ip_cidr", excl),
+]))
+
+json.dump(d, open(conf, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+PYEOF
+}
+
 prepare_conf() {
     local mtu
     mtu=$(/usr/bin/head -c 16 "$MTU_FLAG" 2>/dev/null | /usr/bin/tr -dc '0-9')
@@ -67,15 +117,32 @@ prepare_conf() {
 
     if [ -n "$mtu" ] && [ "$mtu" -ge 576 ] && [ "$mtu" -le 9000 ]; then
         /usr/bin/sed "s/\"mtu\": [0-9]*/\"mtu\": $mtu/" "$CONF" > "$RUN_CONF" 2>/dev/null
+        apply_excludes
         if "$SINGBOX" check -c "$RUN_CONF" >/dev/null 2>&1; then
-            echo "mtu=$mtu"
+            echo "mtu=$mtu excl=$(excl_count)"
             return
         fi
         log "自定义 MTU $mtu 生成的配置校验失败, 回退默认配置"
     fi
 
     /bin/cp "$CONF" "$RUN_CONF"
-    echo "mtu=default"
+    apply_excludes
+    if ! "$SINGBOX" check -c "$RUN_CONF" >/dev/null 2>&1; then
+        log "合并排除清单后校验失败, 回退到未合并的配置"
+        /bin/cp "$CONF" "$RUN_CONF"
+        echo "mtu=default excl=FAILED"
+        return
+    fi
+    echo "mtu=default excl=$(excl_count)"
+}
+
+excl_count() {
+    /usr/bin/python3 - "$RUN_CONF" 2>/dev/null <<'PYEOF'
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+t = next((i for i in d.get("inbounds", []) if i.get("type") == "tun"), None)
+print(len((t or {}).get("route_exclude_address") or []))
+PYEOF
 }
 
 SB_PID=""

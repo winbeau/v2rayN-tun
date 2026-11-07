@@ -17,6 +17,10 @@
                          └──────────────────────────────────────┘                          66.248.154.224
 ```
 
+**⚠️ TUN 会吃掉内网**：`auto_route` 插的 `8.0.0.0/5` 覆盖路由把整个 `10.0.0.0/8`
+包进去了 —— 校园网、WireGuard 对端、路由器后台都会走 utun。所以必须排除，
+否则代理一挂 NAS 隧道跟着断。详见 [21](21-tun-eats-private-networks.md)。
+
 **三条出路**：
 
 | 目标 | 出站 | 出口 IP | 说明 |
@@ -110,6 +114,7 @@ diff <(python3 -m json.tool config/sing-box.json) \
 |---|---|
 | `tun-disabled` | 存在则不建 TUN |
 | `tun-mtu` | 内容为 MTU 数值（默认 1500） |
+| `~/.v2rayn-tun/tun-exclude.txt` | 不经过 TUN 的网段（校园网、WireGuard 段）| 每行一个 CIDR，守护每次启动合并 |
 | `killswitch-always` | 存在则 v2rayN 退出后也保持 TUN |
 | `no-sleep-timeout` | 合盖放开睡眠的空闲秒数（默认 2400） |
 | `allow-quit` | 存在则放行 Cmd+Q |
@@ -157,6 +162,6 @@ tail -f ~/Library/Logs/v2rayn-quitguard.log
 | **性能** | [05 微信卡顿](05-wechat-lag.md) · [06 GitHub 慢](06-github-slow.md) |
 | **节点** | [08 故障排查](08-node-failure-triage.md) · [09 VPS 调优](09-vps-tuning.md) · [10 Reality](10-reality-setup.md) · [11 Hysteria2](11-hysteria2-real-cert.md) |
 | **安全** | [12 Cmd+Q 拦截](12-quit-guard.md) · [13 IP 泄漏防护](13-ip-leak-protection.md) · [16 国内直连泄漏](16-cn-direct-ip-leak.md) · [17 封号检测调研](17-claude-ban-detection-analysis.md) |
-| **运维** | [18 风险登记](18-risk-register.md) · [19 路由实施](19-routing-implementation.md) · [20 节点参数被改](20-node-params-changed.md) |
+| **运维** | [18 风险登记](18-risk-register.md) · [19 路由实施](19-routing-implementation.md) · [20 节点参数被改](20-node-params-changed.md) · [21 TUN 吃内网](21-tun-eats-private-networks.md) |
 | **订阅** | [14 节点 SNI 屏蔽](14-node-sni-blocking.md) · [15 Clash 订阅转换](15-clash-sub-to-v2rayn.md) |
 | **工具** | [toolbox](toolbox.md) |
