@@ -155,7 +155,7 @@ python3 scripts/switch-cn-node.py plan --group 2-geneva --node '(赠送)日本CN
 sudo python3 scripts/switch-cn-node.py apply --group 2-geneva --node '(赠送)日本CN2专线娱乐节点'
 ```
 
-## 两个免 sudo 开关
+## 三个免 sudo 开关
 
 安装后，日常调整不需要密码（最多 5 秒生效）：
 
@@ -166,6 +166,22 @@ rm    ~/Library/Application\ Support/v2rayN/tun-disabled     # 恢复
 
 # 临时调整 TUN MTU（取值 576-9000，生成后会用 sing-box check 校验，失败自动回退）
 echo 1500 > ~/Library/Application\ Support/v2rayN/tun-mtu
+
+### 3. `~/.v2rayn-tun/tun-exclude.txt` —— 不经过 TUN 的网段
+
+**这个必须配，否则校园网 / WireGuard / 路由器后台都会被 TUN 吃掉。**
+
+```bash
+cat ~/.v2rayn-tun/tun-exclude.txt
+# 10.0.0.0/8          校园网（含 WireGuard 对端）
+# 192.168.99.0/24     WireGuard 隧道段
+```
+
+每行一个 CIDR，`#` 开头是注释。守护**每次启动都会合并**，
+所以即使别的脚本把配置重写了也会自动恢复。
+
+原因：`auto_route` 的 `8.0.0.0/5` 覆盖路由把整个 `10.0.0.0/8` 包进去了。
+详见 [docs/21](docs/21-tun-eats-private-networks.md)。
 rm   ~/Library/Application\ Support/v2rayN/tun-mtu           # 恢复默认 9000
 ```
 
