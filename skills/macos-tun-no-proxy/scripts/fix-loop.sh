@@ -27,22 +27,50 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LIVE=/usr/local/libexec/v2rayn-tun/config.json
 
 if [ "${1:-}" = "--check" ]; then
-    /usr/bin/python3 - "$LIVE" <<'PY'
+    /usr/bin/python3 - "$LIVE" <<'PYEND'
 import json, sys, subprocess
+
 d = json.load(open(sys.argv[1], encoding='utf-8'))
-t = d['inbounds'][0]
-excl = t.get('route_exclude_address') or []
-print(f"  TUN route_exclude_address: {len(excl)} 条")
-for x in excl: print(f"    {x}")
-bad = 0
+excl = d['inbounds'][0].get('route_exclude_address') or []
+
+# sing-box 自己那个 TUN 的接口名（地址 172.19.0.1）
+out = subprocess.run(['/sbin/ifconfig'], capture_output=True, text=True).stdout
+tun_name, cur = None, None
+for line in out.split('\n'):
+    if line and not line.startswith('\t') and ':' in line and 'flags' in line:
+        cur = line.split(':')[0]
+    if 'inet 172.19.0.1' in line and cur:
+        tun_name = cur
+
+print(f"  TUN 接口:            {tun_name or '(没找到)'}")
+print(f"  route_exclude_address: {len(excl)} 条")
+for x in excl:
+    print(f"    {x}")
+
+# ⚠️ 不能把「走 utun 就算错」—— WireGuard 的 utun6 是【对的】。
+#    只有落在 sing-box 自己那个 TUN 上，才说明被吃了、会成环。
+#    最早的版本就是简单 grep 'utun'，把 192.168.99.0/24（WireGuard 段）
+#    误报成故障。
+bad = []
 for x in excl:
     ip = x.split('/')[0]
-    out = subprocess.run(['route','-n','get',ip], capture_output=True, text=True).stdout
-    if 'utun' in out:
-        print(f"  ✗ {ip} 仍然走 utun -> 环路会回来"); bad += 1
-if bad == 0:
-    print("  ✓ 全部走物理网卡，没有环路")
-PY
+    r = subprocess.run(['route', '-n', 'get', ip], capture_output=True, text=True).stdout
+    iface = ''
+    for line in r.split('\n'):
+        if 'interface:' in line:
+            iface = line.split(':', 1)[1].strip()
+    if tun_name and iface == tun_name:
+        bad.append((ip, iface))
+
+print()
+if bad:
+    for ip, i in bad:
+        print(f"  ✗ {ip} 仍在 sing-box 的 TUN ({i}) 上 -> 环路会回来")
+    print(f"  共 {len(bad)} 条有问题")
+else:
+    print("  ✓ 没有一条落在 sing-box 的 TUN 上")
+    print("    （走别的 utun 是正常的 —— WireGuard 的 utun6 本来就该走）")
+PYEND
     exit 0
 fi
 
@@ -113,13 +141,28 @@ sleep 6
 
 echo
 echo "════════ 验证 ════════"
-/usr/bin/python3 - "$LIVE" <<'PY'
+/usr/bin/python3 - "$LIVE" <<'PYEND'
 import json, sys, subprocess
 d = json.load(open(sys.argv[1], encoding='utf-8'))
 excl = d['inbounds'][0].get('route_exclude_address') or []
-bad = [x for x in excl if 'utun' in subprocess.run(['route','-n','get',x.split('/')[0]],
-        capture_output=True, text=True).stdout]
-print(f"  排除 {len(excl)} 条, 其中仍走 utun 的: {len(bad)}")
+out = subprocess.run(['/sbin/ifconfig'], capture_output=True, text=True).stdout
+tun_name, cur = None, None
+for line in out.split('\n'):
+    if line and not line.startswith('\t') and ':' in line and 'flags' in line:
+        cur = line.split(':')[0]
+    if 'inet 172.19.0.1' in line and cur:
+        tun_name = cur
+bad = []
+for x in excl:
+    ip = x.split('/')[0]
+    r = subprocess.run(['route','-n','get',ip], capture_output=True, text=True).stdout
+    iface = ''
+    for line in r.split('\n'):
+        if 'interface:' in line:
+            iface = line.split(':',1)[1].strip()
+    if tun_name and iface == tun_name:
+        bad.append(ip)
+print(f"  排除 {len(excl)} 条, 落在 sing-box TUN({tun_name}) 上的: {len(bad)}")
 if bad: print(f"  ✗ {bad}")
-else:   print("  ✓ 全部走物理网卡")
-PY
+else:   print("  ✓ 没有环路")
+PYEND

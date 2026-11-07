@@ -29,5 +29,6 @@
 | [19](19-routing-implementation.md) | 路由实施记录 | **「国内直连」这个概念本身被取消了** —— 国内走日本、国外走住宅、只有 22 个域名直连。 |
 | [20](20-node-params-changed.md) | 节点参数被官方改了怎么办 | 节点连不上时，**先比对端口/uuid/公钥有没有变**，再怀疑自己的配置 —— 官方改参数不会通知任何人。 |
 | [21](21-tun-eats-private-networks.md) | TUN 把内网也吃掉了 | `auto_route` 的覆盖路由会把 `10/8`、`192.168` 这些内网一起抓进 TUN —— 校园网、WireGuard、路由器后台全废。 |
+| [22](22-identifying-residential-ip.md) | 怎么判断一个出口 IP 是不是真住宅 | 看 **whois/BGP + PTR**，别看 `ip-api` 的 ISP 字段 —— 它会告诉你 Comcast，实际是别家的段。 |
 
 另见 [toolbox](toolbox.md) —— 实际定位问题时用过的命令。

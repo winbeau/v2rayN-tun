@@ -139,6 +139,21 @@
     兜着，代理一挂隧道就断。
     排除用 `inbounds[tun].route_exclude_address`（`bind_interface` 在 macOS
     上无效），清单放 `~/.v2rayn-tun/tun-exclude.txt`，由守护每次启动合并。
+29. **★★ TUN 下 `ping` / `nc` / `curl time_connect` 全是假信号。★★**
+    实测过的三种假象：
+      `ping <公网IP>` 返回 0.3-1ms（sing-box 直接应答，根本没出网）
+      `nc -z <IP> <任意端口>` 一律"成功"（连 59999 和 1 号端口都成功）
+      `curl -w '%{time_connect}'` 经 SOCKS 时是 0ms（只反映到本地代理的握手）
+    唯一可靠的做法是**起独立客户端走物理网卡**再用它测。
+    而且**必须先做阳性对照**：拿一个绝对不存在的目标试一次，
+    如果它也"成功"，这个测法就是假的。
+    这个坑本项目踩过至少四次，每次都是拿 TUN 下的假数字当证据。
+30. **判断 IP 画像看 whois/BGP 和 PTR，别看 `ip-api` 的 ISP 字段。**
+    实测：`ip-api` 说某个 IP 是 Comcast，whois 说是 AviationAI 的段，
+    而 BGP 显示由 AS7922 宣告 —— 三个源三个说法，只有 BGP 是路由事实。
+    `hosting=false` / `proxy=false` 只说明它不在已知的机房名单里，
+    **不能证明是住宅**。真正区分「住宅 / 企业专线 / 机房」的是 **PTR**：
+    空 PTR 多半是家宽，`xxx.company.com` 是企业专线，云厂商域名是机房。
 
 ## 常用命令
 

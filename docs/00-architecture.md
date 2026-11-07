@@ -162,6 +162,6 @@ tail -f ~/Library/Logs/v2rayn-quitguard.log
 | **性能** | [05 微信卡顿](05-wechat-lag.md) · [06 GitHub 慢](06-github-slow.md) |
 | **节点** | [08 故障排查](08-node-failure-triage.md) · [09 VPS 调优](09-vps-tuning.md) · [10 Reality](10-reality-setup.md) · [11 Hysteria2](11-hysteria2-real-cert.md) |
 | **安全** | [12 Cmd+Q 拦截](12-quit-guard.md) · [13 IP 泄漏防护](13-ip-leak-protection.md) · [16 国内直连泄漏](16-cn-direct-ip-leak.md) · [17 封号检测调研](17-claude-ban-detection-analysis.md) |
-| **运维** | [18 风险登记](18-risk-register.md) · [19 路由实施](19-routing-implementation.md) · [20 节点参数被改](20-node-params-changed.md) · [21 TUN 吃内网](21-tun-eats-private-networks.md) |
+| **运维** | [18 风险登记](18-risk-register.md) · [19 路由实施](19-routing-implementation.md) · [20 节点参数被改](20-node-params-changed.md) · [21 TUN 吃内网](21-tun-eats-private-networks.md) · [22 住宅 IP 鉴别](22-identifying-residential-ip.md) |
 | **订阅** | [14 节点 SNI 屏蔽](14-node-sni-blocking.md) · [15 Clash 订阅转换](15-clash-sub-to-v2rayn.md) |
 | **工具** | [toolbox](toolbox.md) |
