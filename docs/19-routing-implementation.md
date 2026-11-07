@@ -389,3 +389,41 @@ sudo python3 scripts/switch-cn-node.py apply --node direct
 身份运行的工具（`stealth-mode.sh status`、`check-site.sh`、以及本脚本的
 `plan`）全部 `PermissionError`。改成 644 —— 文件在 `/usr/local/libexec`
 下是 root 所有，普通用户改不了，读没问题。
+
+## uTLS 指纹：chrome 会被 Cloudflare 拦
+
+**症状**：经 `node-direct`（sing-box 直连住宅节点）访问：
+
+```
+claude.ai         000  0.21s   ← 立刻 RST
+api.anthropic     000  0.21s   ← 立刻 RST
+console           301  ✓
+cloudflare        200  ✓
+```
+
+**但去掉 User-Agent 就又通了**（403），说明不是网络问题。
+
+**根因**：`tls.utls.fingerprint = "chrome"`。
+`chrome` 指纹用得太多，Cloudflare 会当成伪造的浏览器特征直接 RST。
+
+**实测对照**（同一节点、同一 UA）：
+
+| fingerprint | claude.ai | api.anthropic |
+|---|---|---|
+| `chrome` | 403 | **000** ✗ |
+| `random` | 403 | 401 ✓ |
+| `safari` | 403 | 401 ✓ |
+| `firefox` | 403 | 401 ✓ |
+| 不用 uTLS | 000 ✗ | 000 ✗ |
+
+**→ 用 `random`。**
+
+**注意**：订阅里给的是 `chrome`，所以 `per-app-routing.py` 里必须覆盖：
+
+```python
+fp = q.get("fp") or "chrome"
+if fp == "chrome":
+    fp = "random"
+```
+
+**否则重跑 `apply` 会把修好的又改回去。**

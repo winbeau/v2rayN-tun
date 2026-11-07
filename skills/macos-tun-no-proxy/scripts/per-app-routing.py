@@ -192,7 +192,16 @@ def build_outbound(link):
     if q.get("sni"):
         tls["server_name"] = q["sni"]
     if q.get("fp"):
-        tls["utls"] = {"enabled": True, "fingerprint": q["fp"]}
+        # ★ 指纹固定用 random, 不要跟随订阅里的 chrome ★
+        #   实测: utls fingerprint=chrome 时, 经 node-direct 访问
+        #   api.anthropic.com 被 Cloudflare 直接 RST (0.2 秒 000);
+        #   换成 random / safari / firefox 就正常 (401)。
+        #   chrome 指纹太常见, 被当成伪造。而订阅里给的就是 chrome,
+        #   所以这里必须覆盖, 否则重跑 apply 会把修好的又改回去。
+        fp = q.get("fp") or "chrome"
+        if fp == "chrome":
+            fp = "random"
+        tls["utls"] = {"enabled": True, "fingerprint": fp}
     if q.get("security") == "reality" or q.get("pbk"):
         tls["reality"] = collections.OrderedDict([
             ("enabled", True),
