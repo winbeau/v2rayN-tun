@@ -256,3 +256,31 @@ tail -30 ~/Library/Application\ Support/v2rayN/guiLogs/$(date +%Y-%m-%d).txt
 
 域名指定的节点在 TUN 运行时切换会触发 DNS 引导死锁（解析节点域名需要代理、代理需要先解析节点）。
 退出 v2rayN 后 TUN 撤掉，域名可走直连解析，之后启动即可。
+
+## 上游证书过期时：本地 TLS 中转
+
+有些 API 中转服务会忘记续证书（实测 `api.chiyi.cc` 的 Let's Encrypt 证书
+到期后没有自动续上），客户端一律拒绝连接。本地起一个 TLS 中转可以绕过去。
+
+```
+Codex  ->  https://127.0.0.1:18443/v1     自己签的证书（10 年有效）
+       ->  本地中转 /usr/local/libexec/codex-tls-relay.py
+       ->  https://api.chiyi.cc:443        连后端时不校验证书
+```
+
+**三个必须注意的点**（都踩过）：
+
+1. 单向搬运结束时只能**半关闭**（`shutdown(SHUT_WR)`），双向 `close` 会把响应截成空。
+2. 必须把请求头的 `Host` 改写成真实域名，否则 CDN 回 `HTTP 456`。
+3. `sudo launchctl setenv` 设的是 **root 会话**，GUI 应用读不到。要用不带 sudo 的
+   `launchctl setenv`，同时写进 `~/.zshrc`。
+
+**代价**：这条链路失去中间人防护。只用于单个上游域名。
+
+```bash
+# 看日志
+sudo tail -f /var/log/codex-tls-relay.log
+
+# 停掉
+sudo launchctl bootout system/com.local.codex-tls-relay
+```

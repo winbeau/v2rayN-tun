@@ -1,103 +1,47 @@
-# v2rayN TUN 模式（macOS）
+# v2rayN TUN
 
-把 v2rayN 从「系统代理」升级为「全局 TUN 透明代理」，**免密码、开机自动、网络切换自动恢复**。
+![macOS](https://img.shields.io/badge/macOS-14%2B-000000?logo=apple&logoColor=white)
+![arch](https://img.shields.io/badge/arch-arm64%20%7C%20x86__64-444444)
+![sing-box](https://img.shields.io/badge/sing--box-1.14.0-0B7285)
+![v2rayN](https://img.shields.io/badge/v2rayN-7.25.4-1971C2)
+![status](https://img.shields.io/badge/status-in--use-2B8A3E)
+![last commit](https://img.shields.io/github/last-commit/winbeau/v2rayN-tun?color=868E96)
 
-```
-应用 → sing-box TUN (root) → socks 127.0.0.1:10808 → xray (v2rayN) → 节点
-```
+把 v2rayN 的代理变成系统级 TUN：打开 v2rayN 就有 TUN，退出即撤掉。
 
-国内流量由 sing-box 直接判定（`geoip-cn` / `geosite-cn` → direct），国外流量交给 xray 走节点。
+v2rayN 7.25.4 自带的 TUN 在 macOS 上有两个源码级问题，这个仓库用独立的 root 守护
+接手，绕开它们，并且补上路由、DNS、网络切换这些 v2rayN 管不到的部分。
 
-> **本仓库是代理配置的唯一归口。** 结构见 [`AGENTS.md`](AGENTS.md)：
->
-> | 目录 | 内容 |
-> |---|---|
-> | [`skills/`](skills/) | **技能包**（agent 入口）：`deploy-us-proxy`（VPS 部署）、`macos-tun-no-proxy`（本机 TUN） |
-> | [`docs/`](docs/README.md) | 排查记录：18 篇「弯路 + 解法」 |
-> | [`scripts/`](scripts/) | 服务端调优与运维工具 |
-> | `config/` `daemon/` `launchd/` `install.sh` | 本文档描述的 TUN 守护进程 |
+![三条出路](assets/diagram-1-three-paths.png)
 
-> 📚 **先读 [`docs/00 整体架构`](docs/00-architecture.md)** —— 数据流、组件、开关、脚本一览。
-> 排查记录见 [`docs/`](docs/README.md)（18 篇，每篇一句话概述）。
+## 三条出路
 
----
+TUN 起来后，流量按目标分三路：
 
-## 为什么需要这套东西
+| 目标 | 出站 | 出口 | 用途 |
+|---|---|---|---|
+| 国外 | `proxy` → `127.0.0.1:10808` → xray → 节点 | 节点 IP | 日常代理 |
+| 例外域名 / IP | `direct` | 真实 IP | 只认国内 IP 的站（微信、教育、政务）|
+| 其余国内 | `cn-via-jp` | 直连或指定节点 | 默认直连 |
 
-v2rayN 7.25.4 在 macOS 上开 TUN 有两个硬伤，都是源码里写死的：
+例外清单在 `~/.v2rayn-tun/extra-direct.txt` 和 `extra-direct-ip.txt`，改完重启守护生效。
 
-**1. 每次启动都要输 sudo 密码**
+## 两层路由
 
-```csharp
-// StatusBarViewModel 构造函数：启动时强制关掉 TUN
-if (_config.TunModeItem.EnableTun && AllowEnableTun())
-    EnableTun = true;
-else
-    _config.TunModeItem.EnableTun = EnableTun = false;
-
-private bool AllowEnableTun() => AppManager.Instance.LinuxSudoPwd.IsNotEmpty();
-```
-
-`LinuxSudoPwd` 是**纯内存变量**，全代码库只有密码框会赋值、从不从配置读取。所以每次启动都必须手动拨开关 + 输密码。
-
-**2. TUN 与 v2rayN 生命周期绑定**
-
-它通过 `run_as_sudo.sh` 里的 `sudo -S` 拉起 sing-box。一旦代理端口抖动或 v2rayN 退出，TUN 就悬空，可能把整机流量丢进死代理。
-
-本项目的做法：**把 TUN 部分独立成 root LaunchDaemon**，sing-box 常驻托管，不依赖 v2rayN 的密码机制。
-
----
-
-## 流量怎么走（三路）
+流量要穿过两层，两层都得配：
 
 ```
-例外域名 (22 个)          ->  direct      真实网络
-  微信/腾讯 · 教育网 edu.cn · 政务 gov.cn
-  （只认国内 IP，经境外节点实测全部失败）
-
-其他国内方向             ->  cn-via-jp   日本CN2-3  151.242.164.241
-  （geoip-cn / geosite-cn；DNS 也从这里解析，不再用国内 DNS）
-
-国外方向                 ->  proxy -> xray -> 住宅节点  66.248.154.224
-  （Claude 走的就是这条）
-
-局域网 / 本地域名         ->  direct
+应用 → TUN(sing-box) → proxy → xray(v2rayN) → 节点
+        第 1 层                  第 2 层
 ```
 
-**豁免进程**（AdsPower 的 `SunBrowser` 系列）额外一条：国外目标走 `node-direct`
-（vless 直连住宅节点，绕开 xray）—— 因为 xray 看不到"连接来自哪个进程"，
-会按自己的路由把国内目标直连。详见 [docs/16](docs/16-cn-direct-ip-leak.md)。
+- **第 1 层** 决定哪些走直连、哪些进代理。改这里是 `per-app-routing.py`。
+- **第 2 层** 决定 xray 怎么处理收到的连接。在 v2rayN 里选 `V4-禁直连(TUN 专用)`，
+  这个配置项由 `scripts/make-routing-profile.py` 生成。
 
-### 两层路由，都要配
+只改一层会出现「国内能开、国外不能」或者反过来。
 
-| 层 | 组件 | 在哪配 |
-|---|---|---|
-| 第 1 层 | sing-box（本项目的 TUN）| `scripts/setup-routing.sh` |
-| 第 2 层 | xray（v2rayN 管理）| GUI 里选中「V4-禁直连(TUN 专用)」|
-
-第 2 层的兜底必须是 `proxy` 而不是 `direct` —— 这样第 1 层万一漏了某个国内目标，
-第 2 层也只会送去节点，节点到不了中国 → 请求失败，但**不会泄漏真实 IP**。
-
-## 文件说明
-
-```
-v2rayN-tun/
-├── install.sh                     # 安装/更新 (root)
-├── uninstall.sh                   # 卸载 (root)
-├── config/
-│   └── sing-box.json              # TUN 的 sing-box 配置
-├── daemon/
-│   ├── run-tun.sh                 # TUN 守护包装脚本
-│   └── dnsguard.sh                # 网络守护 (DNS 污染 + 网络切换重绑定)
-└── launchd/
-    ├── com.local.v2rayn-tun.plist      # TUN 守护 (root, KeepAlive)
-    ├── com.local.v2rayn-dnsguard.plist # 网络守护 (root, 30s + 监听网络变化)
-    └── v2rayN-LaunchAgent.plist        # v2rayN 登录自启 (用户级)
-```
-
-脚本与配置里的 `__USER_HOME__` 由 `install.sh` 在安装时替换为实际用户主目录，因此仓库可以直接复用到别的机器。
-
----
+![两层路由](assets/diagram-2-two-layers.png)
 
 ## 安装
 
@@ -105,245 +49,112 @@ v2rayN-tun/
 sudo ./install.sh
 ```
 
-前置条件：**先手动启动过一次 v2rayN**，让它把 sing-box 核心和规则集释放到
+前置：**手动启动过一次 v2rayN**，让它把 `sing-box` 和 `.srs` 规则集释放到
 `~/Library/Application Support/v2rayN/bin/`。
 
-安装脚本会：
-
-1. 从 v2rayN 复制 `sing-box` 与 4 个 `.srs` 规则集（这两个不入库，因为体积大且随 v2rayN 更新）
-2. 替换 `__USER_HOME__` 后安装脚本与配置到 `/usr/local/libexec/`
-3. 收紧权限（全部 `root:wheel`，用户不可写 —— 这是安全关键，避免留下提权面）
-4. 安装并加载 2 个 LaunchDaemon + 1 个 LaunchAgent
-5. 自检连通性
-
-**卸载**：`sudo ./uninstall.sh`
-
----
-
-### 装完还要配路由（必须）
-
-`install.sh` 只装 sing-box 守护；装完的配置里**国内仍然直连**，真实 IP 会泄漏。
-剩下的依赖你自己的订阅和节点选择，所以单独一步：
+装完还要配路由。这一步依赖你自己的订阅，所以单独执行：
 
 ```bash
 sudo ./scripts/setup-routing.sh --cn-node 日本CN2-3
 ```
 
-然后 **打开 v2rayN → 设置 → 路由设置 → 选中「V4-禁直连(TUN 专用)」**。
+再打开 **v2rayN → 设置 → 路由设置 → 选中「V4-禁直连(TUN 专用)」**。
 
 验证：`./scripts/setup-routing.sh --check`
 
-### 更换已有的国内出口节点
+卸载：`sudo ./uninstall.sh`
 
-日本节点不可用时，可以将现有国内出站换成 v2rayN 数据库里的 `selab-reality`：
+## 排除清单
 
-```bash
-python3 scripts/switch-cn-node.py plan --node selab-reality
-sudo python3 scripts/switch-cn-node.py apply --node selab-reality
+TUN 的覆盖路由里有一条 `8.0.0.0/5`，范围覆盖 `8.0.0.0` 到 `15.255.255.255`，
+`10.0.0.0/8` 整个落在里面。不排除的话，校园网、路由器后台、WireGuard 对端都会被抓进 TUN。
+
+排除清单写在 `~/.v2rayn-tun/tun-exclude.txt`，守护每次启动都会合并进配置：
+
+```
+10.0.0.0/8          校园网
+192.168.99.0/24     WireGuard 隧道段
 ```
 
-脚本先校验完整配置，并独立测试新节点访问百度、DeepSeek API 和 DoH。
-通过后只替换国内出站，保留现有 DNS、国内路由、直连例外和国外节点；
-备份原配置后原子写入，重启 TUN，再验证实际访问 DeepSeek API。
-`cn-via-jp` / `jp-dns` 是兼容已有规则的历史标签，不代表换完仍使用日本节点。
-此工具不依赖商业订阅中存在 `selab-reality`，也不需要切换 v2rayN 的全局节点。
-
-同名节点存在于多个分组时，用 `--group` 精确指定：
-
-```bash
-python3 scripts/switch-cn-node.py plan --group 2-geneva --node '(赠送)日本CN2专线娱乐节点'
-sudo python3 scripts/switch-cn-node.py apply --group 2-geneva --node '(赠送)日本CN2专线娱乐节点'
-```
+![排除清单](assets/diagram-3-exclusions.png)
 
 ## 三个免 sudo 开关
 
-安装后，日常调整不需要密码（最多 5 秒生效）：
+装完之后日常调整不需要密码，最多 5 秒生效：
 
 ```bash
-# 临时关闭 TUN（回到纯 v2rayN 本地代理）
+# 临时关闭 TUN，回到纯 v2rayN 本地代理
 touch ~/Library/Application\ Support/v2rayN/tun-disabled
-rm    ~/Library/Application\ Support/v2rayN/tun-disabled     # 恢复
+rm    ~/Library/Application\ Support/v2rayN/tun-disabled
 
-# 临时调整 TUN MTU（取值 576-9000，生成后会用 sing-box check 校验，失败自动回退）
+# 临时调 MTU（576-9000）。生成后会用 sing-box check 校验，失败自动回退
 echo 1500 > ~/Library/Application\ Support/v2rayN/tun-mtu
+rm   ~/Library/Application\ Support/v2rayN/tun-mtu
 
-### 3. `~/.v2rayn-tun/tun-exclude.txt` —— 不经过 TUN 的网段
-
-**这个必须配，否则校园网 / WireGuard / 路由器后台都会被 TUN 吃掉。**
-
-```bash
-cat ~/.v2rayn-tun/tun-exclude.txt
-# 10.0.0.0/8          校园网（含 WireGuard 对端）
-# 192.168.99.0/24     WireGuard 隧道段
+# 不经过 TUN 的网段
+vim ~/.v2rayn-tun/tun-exclude.txt
 ```
 
-每行一个 CIDR，`#` 开头是注释。守护**每次启动都会合并**，
-所以即使别的脚本把配置重写了也会自动恢复。
+三个文件都只影响本机 TUN，守护只读不执行。
 
-原因：`auto_route` 的 `8.0.0.0/5` 覆盖路由把整个 `10.0.0.0/8` 包进去了。
-详见 [docs/21](docs/21-tun-eats-private-networks.md)。
-rm   ~/Library/Application\ Support/v2rayN/tun-mtu           # 恢复默认 9000
-```
+## 守护进程
 
-两个文件都只影响自己的 TUN，不构成提权面（守护只读它们，不执行其内容）。
+| 组件 | 级别 | 作用 |
+|---|---|---|
+| `com.local.v2rayn-tun` | system | 建 TUN、跟随 v2rayN 启停、代理断开时切 kill-switch |
+| `com.local.v2rayn-dnsguard` | system | 修 DNS 污染、网络切换后重绑定 |
+| `com.local.v2rayn-sleepguard` | system | 合盖时阻止休眠，超时自动恢复 |
+| `com.local.v2rayn-quitguard` | gui | Cmd+Q 拦截，只对 v2rayN 生效 |
+| `com.local.codex-tls-relay` | system | 可选，给证书过期的上游做本地 TLS 中转 |
 
----
+`install.sh` 装前四个，最后一个是可选的，见 [docs/toolbox](docs/toolbox.md)。
 
-## 设计要点
-
-### 1. 代理不在就不建 TUN
-
-`run-tun.sh` 每 5 秒探测 `127.0.0.1:10808`：
-
-- 端口就绪 → 拉起 sing-box
-- 端口下线 → 立刻撤掉 TUN
-
-**这避免了「v2rayN 没开 = 整机断网」**：没有 TUN 时系统直接走物理网络。
-
-### 2. 路由环路用 process_path 规避
-
-xray / sing-box 自己去连节点的流量**不能被 TUN 再吞一次**，否则形成死循环：
-
-```json
-{"outbound": "direct", "process_path": [
-  "__USER_HOME__/Library/Application Support/v2rayN/bin/xray/xray",
-  "__USER_HOME__/Library/Application Support/v2rayN/bin/sing_box/sing-box",
-  "/usr/local/libexec/v2rayn-tun/sing-box"
-]}
-```
-
-### 3. IPv6 快速失败而非泄漏
-
-TUN 同时持有 IPv4 与 IPv6 地址以捕获 IPv6，再用 `{"ip_cidr": ["::/0"], "action": "reject"}`
-让 IPv6 快速失败；配合 DNS `strategy: ipv4_only`，从源头不返回 AAAA。
-
-**背景**：节点无 IPv6 能力时，若不给 TUN 配 IPv6 地址，IPv6 流量会**完全绕过代理**（实测泄漏为本机真实 IPv6）。
-
-### 4. 网络守护（`dnsguard.sh`）解决两类"网络变化后没切换干净"
-
-**问题 A：DNS 回落到 on-link 地址**
-
-与主机同网段的 DNS（如路由器 `10.20.30.55`、RA 下发的 IPv6 DNS）走链路直连、**不进 TUN**，
-因此绕过 sing-box 的 DNS 劫持，返回被污染的结果（实测 `google.com` 解析到 Twitter 的 IP 段）。
-
-判定规则是**因果关系而非白名单比对**：只要主解析器在用 on-link / 私有地址就改回公网 DNS，
-因此不会和用户自定义的公网 DNS 打架。
-
-**问题 B：sing-box 出站绑定失效（重要）**
-
-sing-box 在**启动时**检测网络并确定出站绑定。网络切换（换 WiFi / 热点）后旧地址消失，
-但它仍用旧地址发包：
+## 目录
 
 ```
-ERROR write udp 10.20.30.160:...->119.29.29.29:53: can't assign requested address
+v2rayN-tun/
+├── install.sh / uninstall.sh     # 安装 / 卸载
+├── config/sing-box.json          # TUN 的基础配置
+├── daemon/                       # run-tun.sh / dnsguard.sh / sleep-guard.sh / quit-guard.swift
+├── launchd/                      # 各 LaunchDaemon / LaunchAgent
+├── scripts/                      # 路由生成、节点切换、体检工具
+└── docs/                         # 排查记录
 ```
 
-**结果是所有直连出站失败** —— 表现为微信卡住、程序报传输错误、国内网站打不开。
-守护检测到本机地址变化就重启 TUN，让它重新绑定（带 60 秒防抖）。
-
-实测：切网后 **11 秒自动恢复**（`05:13:04` 出错 → `05:13:15` 检测 → `05:13:20` 重建完成）。
-
----
-
-## 已知限制
-
-### 用域名指定的节点存在 DNS 引导死锁
-
-若活动节点用**域名**（而非固定 IP）指定，切换节点时可能死锁：
-
-```
-解析节点域名 → 需要走代理 → 代理需要先解析这个节点 → 死锁
-```
-
-**规避**：**换节点前先退出 v2rayN** —— TUN 随之撤掉后，域名可走直连解析，之后启动即可。
-
-```bash
-# 1. 从托盘菜单 Exit 退出 v2rayN（TUN 会自动撤掉）
-# 2. 在 GUI 或配置里切换节点
-# 3. 重新启动
-```
-
-在 TUN 运行时切换域名节点会卡死（已实测踩到）。根治办法是在 sing-box 的 `dns.rules`
-里为节点域名加一条走直连解析器的规则，但国内解析器对受封域名可能返回污染结果，
-只对节点域名这样处理是可接受的折中。
-
-### 节点名不代表机房位置
-
-实测一个名为 `selab-ws-HK` 的节点，出口 IP 归属是**洛杉矶**。不要相信节点名里的机房标识，
-用出口 IP 查归属：
-
-```bash
-curl -s https://api.ipify.org
-curl -s "https://ipinfo.io/<出口IP>/json" | grep -E 'city|country'
-```
-
-还要注意**多个节点可能是同一台服务器**（实测两组节点各自指向同一个 IP 的不同协议），
-换节点等于没换 —— 订阅里至少留一个不同机房、不同 IP 的节点，否则单点故障就是全断。
-
-### 延迟取决于节点位置
-
-TLS 握手耗时 ≈ 到节点的往返延迟 × 2~3。以洛杉矶节点为例实测：
-`github.com` TLS 约 0.8-1.2 秒。这是物理距离，配置层面无法改善 —— 换**真正位于**香港/日本/新加坡
-的节点才能显著降低（可降至约 0.15s）。
-
-### 不能加速的两种情形
-
-- **目标站点在国内不可直连**（实测 `github.com` 直连返回 HTTP 000），必须走代理
-- **本地链路带宽见顶**：实测 4 并发吞吐 ≈ 裸链路吞吐，说明已是网络上限而非代理损耗
-
-### 节点故障时非国内域名的 DNS 会一并失效
-
-非国内域名的 DNS 依赖代理 DoH。节点一断，这些域名也解析不了 —— 这是**下游症状**，
-不是 DNS 配置坏了。国内域名不受影响。别在这个假象上浪费时间。
-
----
+脚本和配置里的 `__USER_HOME__` 由 `install.sh` 换成真实路径，仓库可以直接复用到别的机器。
 
 ## 排查
 
 ```bash
-# TUN 守护日志（含 sing-box 输出）
-tail -f /var/log/v2rayn-tun.log
-
-# 网络守护日志（DNS 修复 / 网络切换重启）
-tail -f /var/log/v2rayn-dnsguard.log
+# 守护日志
+sudo tail -f /var/log/v2rayn-tun.log
 
 # 守护状态
-launchctl print system/com.local.v2rayn-tun
-launchctl print system/com.local.v2rayn-dnsguard
+sudo launchctl print system/com.local.v2rayn-tun | head -20
 
-# 重启（改配置后用）
+# 改完配置重启
 sudo launchctl kickstart -k system/com.local.v2rayn-tun
 
-# 判断某个 IP 会不会被判定为国内（决定直连还是走节点）
-/usr/local/libexec/v2rayn-tun/sing-box rule-set match -f binary \
-    /usr/local/libexec/v2rayn-tun/rules/geoip-cn.srs 1.2.3.4
-#   有 "match" 输出 = 命中 = 走直连
+# 体检：路由、例外、节点、环路
+./scripts/diagnose.sh
 
-# 判断某连接实际走直连还是走节点（源端口比对法）
-#   应用侧连接来自 172.19.0.1:<port>
-#   sing-box 出站若为 <en0地址>:<port> → 直连；若为 <节点IP> → 走代理
-netstat -an -f inet | grep <目标IP>
+# 环路检查：节点 IP 是否被 TUN 吃掉
+./scripts/fix-loop.sh --check
 ```
 
-### 检查 sing-box 绑定是否已失效
+排障时注意，**TUN 模式下 `ping`、`nc`、`curl -w '%{time_connect}'` 的数字都不可信**，
+sing-box 会直接应答。要测真实连通性，用独立客户端走物理网卡。
 
-```bash
-# en0 当前地址
-ifconfig en0 | awk '/inet /{print $2}'
-# sing-box 出站实际用的源地址（应为同一个）
-netstat -an -f inet | grep ESTABLISHED | grep -v 172.19.0.1 | grep -v 127.0.0.1
-```
+## 文档
 
-两者不一致 = 绑定已失效，重启 TUN 即可（正常情况守护会自动处理）。
+`docs/` 下是 22 篇排查记录，每篇顶部有一句话总结。建议从这几篇开始：
 
----
+| 主题 | 说明 |
+|---|---|
+| [00 整体架构](docs/00-architecture.md) | 数据流、组件、开关、脚本一览 |
+| [18 风险登记](docs/18-risk-register.md) | 当前已知风险与已排除项 |
+| [19 路由实施](docs/19-routing-implementation.md) | 国内出口、两层配置、切网测试 |
+| [21 TUN 吃内网](docs/21-tun-eats-private-networks.md) | 覆盖路由与排除清单 |
+| [22 住宅 IP 鉴别](docs/22-identifying-residential-ip.md) | whois/BGP/PTR 判出口画像 |
 
-## 安全说明
-
-- `/usr/local/libexec/` 下全部资产为 `root:wheel`，**用户不可写**
-- **不写入任何 sudoers 规则**（`/etc/sudoers.d/` 保持为空）
-- 用户开关文件只被读取判断存在性/数字，不执行其内容
-
-作为对比：网上常见的「sudoers NOPASSWD」方案会把免密 sudo 规则指向
-`~/Library/Application Support/v2rayN/bin/` 里的**用户可写**文件，
-等于给账号开了一条免密 root 通道。本方案刻意避开这一点。
+完整索引见 [docs/README.md](docs/README.md)。
