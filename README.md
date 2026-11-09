@@ -12,7 +12,7 @@
 v2rayN 7.25.4 自带的 TUN 在 macOS 上有两个源码级问题，这个仓库用独立的 root 守护
 接手，绕开它们，并且补上路由、DNS、网络切换这些 v2rayN 管不到的部分。
 
-![三条出路](assets/diagram-1-three-paths.png)
+![架构](assets/architecture.jpg)
 
 ## 三条出路
 
@@ -41,7 +41,6 @@ TUN 起来后，流量按目标分三路：
 
 只改一层会出现「国内能开、国外不能」或者反过来。
 
-![两层路由](assets/diagram-2-two-layers.png)
 
 ## 安装
 
@@ -76,7 +75,6 @@ TUN 的覆盖路由里有一条 `8.0.0.0/5`，范围覆盖 `8.0.0.0` 到 `15.255
 192.168.99.0/24     WireGuard 隧道段
 ```
 
-![排除清单](assets/diagram-3-exclusions.png)
 
 ## 三个免 sudo 开关
 
