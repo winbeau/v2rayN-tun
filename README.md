@@ -12,7 +12,7 @@
 v2rayN 7.25.4 自带的 TUN 在 macOS 上有两个源码级问题，这个仓库用独立的 root 守护
 接手，绕开它们，并且补上路由、DNS、网络切换这些 v2rayN 管不到的部分。
 
-![架构](assets/architecture.jpg)
+![数据流：本机 → sing-box TUN（第 1 层）→ v2rayN xray（第 2 层）→ 三条出路](assets/architecture.jpg)
 
 ## 三条出路
 
