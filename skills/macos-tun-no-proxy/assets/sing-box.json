@@ -7,9 +7,12 @@
   "dns": {
     "servers": [
       {
-        "server": "119.29.29.29",
-        "type": "udp",
-        "tag": "local-local"
+        "type": "https",
+        "tag": "local-local",
+        "server": "dns.alidns.com",
+        "path": "/dns-query",
+        "domain_resolver": "hosts-dns",
+        "detour": "direct"
       },
       {
         "server": "cloudflare-dns.com",
@@ -20,10 +23,12 @@
         "detour": "proxy"
       },
       {
-        "server": "119.29.29.29",
-        "domain_resolver": "local-local",
-        "type": "udp",
-        "tag": "direct-dns-1"
+        "type": "https",
+        "tag": "direct-dns-1",
+        "server": "dns.alidns.com",
+        "path": "/dns-query",
+        "domain_resolver": "hosts-dns",
+        "detour": "direct"
       },
       {
         "predefined": {

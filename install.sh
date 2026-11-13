@@ -239,6 +239,22 @@ touch /var/log/v2rayn-tun.log /var/log/v2rayn-tun.out.log /var/log/v2rayn-tun.er
 chown root:wheel /var/log/v2rayn-*.log 2>/dev/null
 chmod 644 /var/log/v2rayn-*.log 2>/dev/null
 
+# ---------- 5b. 日志体积上限 ----------
+# 2026-11-13 的教训: EasyConnect 引发 DNS 环路, 日志涨到 4.1 GB, 差点撑爆磁盘。
+# 用系统自带的 newsyslog 做体积上限, 避免历史重演。
+if ! grep -q "v2rayn-tun.log" /etc/newsyslog.conf 2>/dev/null; then
+    cp /etc/newsyslog.conf "/etc/newsyslog.conf.bak-$(date +%Y%m%d-%H%M%S)" 2>/dev/null
+    cat >> /etc/newsyslog.conf <<'ROTATE'
+
+# v2rayN TUN 守护日志。环路事故时曾涨到 4.1GB, 因此设体积上限。
+# 50MB 触发轮转, 保留 3 份, bzip2 压缩。
+/var/log/v2rayn-tun.log                 640  3     51200  *     J
+ROTATE
+    echo "   日志轮转: 已添加 (50MB x 3, bzip2)"
+else
+    echo "   日志轮转: 已存在"
+fi
+
 # ---------- 6. 加载 ----------
 echo "--- 5. 加载守护进程 ---"
 SERVICES="com.local.v2rayn-tun com.local.v2rayn-dnsguard com.local.v2rayn-sleepguard"
