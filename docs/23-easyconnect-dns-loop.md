@@ -121,3 +121,49 @@ EasyConnect 连上后：
   和普通 curl 的路径不同。**没有启动 AdsPower 验证，不能拿 curl 的出口代表它。**
 - **`check-exit.sh` 不能当账号安全保证**：它只测少量固定 IP，归属查询失败时
   可能误报「境外正常」。
+
+## 三隧道共存时的路由分工
+
+```
+接口      地址              谁             负责的网段
+utun5     10.99.1.106       EasyConnect    10.103/16
+utun6     192.168.99.2      WireGuard      192.168.99.0/24
+utun7     172.19.0.1        sing-box TUN   其余全部
+```
+
+**接口编号每次都不一样**，别写死。用 `ifconfig` 重新认。
+
+## 如果复发怎么查
+
+**症状**：国内域名解析超时、日志疯涨、`svpnservice` 和 `sing-box` 双双高 CPU。
+
+```bash
+# ① 看日志涨没涨
+ls -lh /var/log/v2rayn-tun.log
+
+# ② 看是不是同一批 DNS 包在打转
+sudo tail -200 /var/log/v2rayn-tun.log | grep -c svpnservice
+
+# ③ 确认 DNS 上游还是 HTTPS（被改回 UDP 就是复发了）
+sudo python3 -c "
+import json
+d = json.load(open('/usr/local/libexec/v2rayn-tun/config.json'))
+for s in d['dns']['servers']:
+    if s['tag'] in ('local-local', 'direct-dns-1'):
+        print(s['tag'], s.get('type'), s.get('server'))
+"
+# 期望: https dns.alidns.com
+
+# ④ 复发就重跑修复
+python3 scripts/fix-easyconnect-dns.py plan
+sudo python3 scripts/fix-easyconnect-dns.py apply
+```
+
+**注意**：`apply` 会重启 TUN，重启前必须确认 Claude / Claude Code / AdsPower 已关闭。
+
+## 一个还没做的优化
+
+`sing-box` 的 `log.level` 是 `info`，每条连接一行，实测约 **88 MB/天**。
+有 newsyslog 的 50MB × 3 兜着不会失控，但会一天触发两次轮转。
+
+改成 `warn` 能降一个数量级，代价是失去连接级排障证据。
