@@ -26,8 +26,14 @@ set -uo pipefail
 #
 # huawei2 (124.71.228.242) 没有那段配置，只能绑 127.0.0.1，
 # 用它会退回两跳（需要 -J）。要单跳请留在 huawei1。
+# 按 cann-tools/expose-public 的约定：中继用户固定是 router，
+# 端口从 22001-22007 这个池子里取（router 的 PermitListen 只放行这些）。
+# 已占用: 22003、22007(pi4)。本机用 22001。
 JUMP_HOST="${EXPOSE_JUMP:-huawei1}"
-JUMP_PORT="${EXPOSE_PORT:-30022}"
+RELAY_USER="${EXPOSE_USER:-router}"
+RELAY_KEY="${EXPOSE_KEY:-$HOME/.ssh/id_ed25519_relay}"
+LOGIN_USER="${EXPOSE_LOGIN:-$(whoami)}"
+JUMP_PORT="${EXPOSE_PORT:-22001}"
 LOCAL_SSHD_PORT=22
 RUNDIR="$HOME/.expose-ssh"
 PIDFILE="$RUNDIR/tunnel.pid"
@@ -54,7 +60,7 @@ need_sshd() {
 
 bind_is_public() {
     # 从跳板机看反向端口绑在哪个地址 —— 这是唯一可信的视角
-    ssh -o ConnectTimeout=8 -o BatchMode=yes "$JUMP_HOST" \
+    ssh -i "$RELAY_KEY" -o IdentitiesOnly=yes -o ConnectTimeout=8 -o BatchMode=yes "$JUMP_HOST" \
         "ss -lnt 2>/dev/null | grep -q '0.0.0.0:${JUMP_PORT}'" 2>/dev/null
 }
 
@@ -78,13 +84,14 @@ cmd_on() {
     (
         while :; do
             ssh -N \
+                -i "$RELAY_KEY" -o IdentitiesOnly=yes \
                 -o ServerAliveInterval=15 \
                 -o ServerAliveCountMax=3 \
                 -o ExitOnForwardFailure=yes \
                 -o StrictHostKeyChecking=accept-new \
                 -o TCPKeepAlive=yes \
                 -R "0.0.0.0:${JUMP_PORT}:127.0.0.1:${LOCAL_SSHD_PORT}" \
-                "$JUMP_HOST" >>"$LOGFILE" 2>&1
+                "${RELAY_USER}@${JUMP_HOST}" >>"$LOGFILE" 2>&1
             echo "[$(date '+%F %T')] 隧道断开，3 秒后重连" >>"$LOGFILE"
             sleep 3
         done
@@ -99,15 +106,16 @@ cmd_on() {
         local jh
         jh=$(ssh -G "$JUMP_HOST" | awk '/^hostname /{print $2}')
         say "  从外面连："
+        sleep 2   # 等反向端口绑定落定，否则会误判成两跳
         if bind_is_public; then
-            say "    ssh -p $JUMP_PORT $(whoami)@$jh"
+            say "    ssh -p $JUMP_PORT ${LOGIN_USER}@$jh"
             say ""
             say "  单跳模式：反向端口绑在跳板机的 0.0.0.0，外部可直连。"
         else
-            say "    ssh -J $JUMP_HOST -p $JUMP_PORT $(whoami)@127.0.0.1"
+            say "    ssh -J ${RELAY_USER}@$JUMP_HOST -p $JUMP_PORT ${LOGIN_USER}@127.0.0.1"
             say ""
             say "  两跳模式：跳板机只允许绑 127.0.0.1，外部要先跳到跳板机。"
-            say "  想要单跳，需要在跳板机给 $(whoami) 用户开"
+            say "  想要单跳，需要在跳板机给 $RELAY_USER 用户开"
             say "  GatewayPorts clientspecified + PermitListen *:$JUMP_PORT。"
         fi
     else

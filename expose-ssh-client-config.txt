@@ -5,7 +5,7 @@
 
 Host mac
     HostName 1.92.76.152
-    Port 30022
+    Port 22001
     User winbeau
     IdentityFile ~/.ssh/id_ed25519
     IdentitiesOnly yes
@@ -16,7 +16,7 @@ Host mac
 # ============================================================
 #  不改 config 的话，一条命令也行：
 #
-#    ssh -p 30022 winbeau@1.92.76.152
+#    ssh -p 22001 winbeau@1.92.76.152
 #
 # ============================================================
 #  前提
