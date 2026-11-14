@@ -16,7 +16,10 @@
 #   · off 之后跳板机的端口也会一起关掉，不留后门
 set -uo pipefail
 
-JUMP_HOST="${EXPOSE_JUMP:-huawei1}"
+# 默认用 huawei2 (124.71.228.242)。
+# 原来默认 huawei1 (1.92.76.152)，但对方经它连总是失败，换 huawei2 就好了。
+# 两台配置一样，可以随时用 EXPOSE_JUMP=huawei1 切回去。
+JUMP_HOST="${EXPOSE_JUMP:-huawei2}"
 JUMP_PORT="${EXPOSE_PORT:-30022}"
 LOCAL_SSHD_PORT=22
 RUNDIR="$HOME/.expose-ssh"
