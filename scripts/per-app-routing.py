@@ -93,10 +93,21 @@ KEEP_DIRECT_KEYS = {"process_path", "ip_is_private", "clash_mode"}
 #    只写主进程会漏掉真正的流量。
 TARGET_PROCESSES = [
     # AdsPower 指纹浏览器的实际内核 (名为 SunBrowser)
-    "SunBrowser",
-    "SunBrowser Helper",
-    "SunBrowser Helper (Renderer)",
-    "SunBrowser Helper (GPU)",
+    #
+    # ⚠️ 2026-11-13 已停用这条豁免。
+    #
+    # 原因: node-direct 是独立的 vless 出站，sing-box 只把【IP】交给它，
+    # 节点看不到域名，住宅转发链路不触发 —— 实测出口是 154.17.27.236
+    # (DMIT 机房, PTR=Host-By.DMIT.com)，而主路径经 xray 是 198.3.122.187
+    # (Verizon 住宅池)。等于把 Claude 的流量送到机房 IP 上，画像是所有
+    # 选项里最差的。
+    #
+    # 删掉豁免后 SunBrowser 走 route.final = proxy，和普通进程一样经 xray，
+    # 就能拿到住宅出口。代价是 AdsPower 里的国内站也走海外节点（慢），
+    # 但它只跑 Claude，影响很小。
+    #
+    # 想恢复豁免，把下面四个名字放回列表即可 —— 但要先解决「域名透传」：
+    # 当前 sing-box 的 vless 出站拿不到域名，恢复后出口仍是机房 IP。
 ]
 
 
