@@ -16,10 +16,17 @@
 #   · off 之后跳板机的端口也会一起关掉，不留后门
 set -uo pipefail
 
-# 默认用 huawei2 (124.71.228.242)。
-# 原来默认 huawei1 (1.92.76.152)，但对方经它连总是失败，换 huawei2 就好了。
-# 两台配置一样，可以随时用 EXPOSE_JUMP=huawei1 切回去。
-JUMP_HOST="${EXPOSE_JUMP:-huawei2}"
+# 默认 huawei1 (1.92.76.152)，走【单跳】：端口绑 0.0.0.0，外部直接连。
+#
+# 为什么之前是两跳：huawei1 的 /etc/ssh/sshd_config.d/90-router.conf 里
+# GatewayPorts 和 PermitListen 都写在 `Match User router` 下，只对 router
+# 用户生效；winbeau 建的 -R 一律落回 127.0.0.1，外部进不来。
+# 2026-11-14 加了 95-winbeau-tunnel.conf（Match User winbeau，
+# GatewayPorts clientspecified + PermitListen *:30022）之后就通了。
+#
+# huawei2 (124.71.228.242) 没有那段配置，只能绑 127.0.0.1，
+# 用它会退回两跳（需要 -J）。要单跳请留在 huawei1。
+JUMP_HOST="${EXPOSE_JUMP:-huawei1}"
 JUMP_PORT="${EXPOSE_PORT:-30022}"
 LOCAL_SSHD_PORT=22
 RUNDIR="$HOME/.expose-ssh"
@@ -43,6 +50,12 @@ need_sshd() {
         return 1
     fi
     return 0
+}
+
+bind_is_public() {
+    # 从跳板机看反向端口绑在哪个地址 —— 这是唯一可信的视角
+    ssh -o ConnectTimeout=8 -o BatchMode=yes "$JUMP_HOST" \
+        "ss -lnt 2>/dev/null | grep -q '0.0.0.0:${JUMP_PORT}'" 2>/dev/null
 }
 
 is_up() {
@@ -86,12 +99,17 @@ cmd_on() {
         local jh
         jh=$(ssh -G "$JUMP_HOST" | awk '/^hostname /{print $2}')
         say "  从外面连："
-        say "    ssh -J $JUMP_HOST -p $JUMP_PORT $(whoami)@127.0.0.1"
-        say ""
-        say "  说明：跳板机 sshd 的 GatewayPorts 是 no，反向端口只能绑它自己的"
-        say "        127.0.0.1，所以外部必须先跳到跳板机（-J），再连 127.0.0.1。"
-        say "        想直接 ssh -p $JUMP_PORT ...@$jh，需要在跳板机设 GatewayPorts"
-        say "        clientspecified 并重启 sshd。"
+        if bind_is_public; then
+            say "    ssh -p $JUMP_PORT $(whoami)@$jh"
+            say ""
+            say "  单跳模式：反向端口绑在跳板机的 0.0.0.0，外部可直连。"
+        else
+            say "    ssh -J $JUMP_HOST -p $JUMP_PORT $(whoami)@127.0.0.1"
+            say ""
+            say "  两跳模式：跳板机只允许绑 127.0.0.1，外部要先跳到跳板机。"
+            say "  想要单跳，需要在跳板机给 $(whoami) 用户开"
+            say "  GatewayPorts clientspecified + PermitListen *:$JUMP_PORT。"
+        fi
     else
         say "✗ 隧道没起来，看日志: $LOGFILE"
         tail -5 "$LOGFILE" | sed 's/^/    /'
