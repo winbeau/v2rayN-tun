@@ -30,6 +30,7 @@
 | [20](20-node-params-changed.md) | 节点参数被官方改了怎么办 | 节点连不上时，**先比对端口/uuid/公钥有没有变**，再怀疑自己的配置 —— 官方改参数不会通知任何人。 |
 | [21](21-tun-eats-private-networks.md) | TUN 把内网也吃掉了 | `auto_route` 的覆盖路由会把 `10/8`、`192.168` 这些内网一起抓进 TUN —— 校园网、WireGuard、路由器后台全废。 |
 | [22](22-identifying-residential-ip.md) | 怎么判断一个出口 IP 是不是真住宅 | 看 **whois/BGP + PTR**，别看 `ip-api` 的 ISP 字段 —— 它会告诉你 Comcast，实际是别家的段。 |
-| [23](23-easyconnect-dns-loop.md) | EasyConnect 与国内 DNS 冲突 | 国内 UDP DNS 超时且 svpnservice 重复进入 TUN；独立验证 HTTPS DNS 可用，应用前需关闭代理客户端。 |
+| [23](23-easyconnect-dns-loop.md) | EasyConnect 与国内 DNS 查询冲突 | （缺） |
+| [24](24-intermittent-tls-reset.md) | TLS 握手被间歇性重置 | RST 在 8–10 ms 到达、而到节点 RTT 有 190 ms —— 服务器来不及回话，是在路上被掐的；而这种掐断会自己恢复。 |
 
 另见 [toolbox](toolbox.md) —— 实际定位问题时用过的命令。
