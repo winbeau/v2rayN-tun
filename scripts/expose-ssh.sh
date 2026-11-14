@@ -58,12 +58,6 @@ need_sshd() {
     return 0
 }
 
-bind_is_public() {
-    # 从跳板机看反向端口绑在哪个地址 —— 这是唯一可信的视角
-    ssh -i "$RELAY_KEY" -o IdentitiesOnly=yes -o ConnectTimeout=8 -o BatchMode=yes "$JUMP_HOST" \
-        "ss -lnt 2>/dev/null | grep -q '0.0.0.0:${JUMP_PORT}'" 2>/dev/null
-}
-
 is_up() {
     [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE" 2>/dev/null)" 2>/dev/null
 }
@@ -106,18 +100,10 @@ cmd_on() {
         local jh
         jh=$(ssh -G "$JUMP_HOST" | awk '/^hostname /{print $2}')
         say "  从外面连："
-        sleep 2   # 等反向端口绑定落定，否则会误判成两跳
-        if bind_is_public; then
-            say "    ssh -p $JUMP_PORT ${LOGIN_USER}@$jh"
-            say ""
-            say "  单跳模式：反向端口绑在跳板机的 0.0.0.0，外部可直连。"
-        else
-            say "    ssh -J ${RELAY_USER}@$JUMP_HOST -p $JUMP_PORT ${LOGIN_USER}@127.0.0.1"
-            say ""
-            say "  两跳模式：跳板机只允许绑 127.0.0.1，外部要先跳到跳板机。"
-            say "  想要单跳，需要在跳板机给 $RELAY_USER 用户开"
-            say "  GatewayPorts clientspecified + PermitListen *:$JUMP_PORT。"
-        fi
+        say "    ssh -p $JUMP_PORT ${LOGIN_USER}@$jh"
+        say ""
+        say "  中继: ${RELAY_USER}@${JUMP_HOST}，端口 ${JUMP_PORT} 绑 0.0.0.0，单跳可连。"
+        say "  如果连不通，先在跳板机确认：ss -lnt | grep ${JUMP_PORT}"
     else
         say "✗ 隧道没起来，看日志: $LOGFILE"
         tail -5 "$LOGFILE" | sed 's/^/    /'
