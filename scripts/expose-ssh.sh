@@ -56,13 +56,23 @@ cmd_on() {
     say "→ 建立反向隧道 $JUMP_HOST:$JUMP_PORT -> 127.0.0.1:$LOCAL_SSHD_PORT"
     # -R 0.0.0.0: 需要在跳板机 sshd 配 GatewayPorts clientspecified
     # -R 只写端口号时，跳板机默认绑 127.0.0.1，外部进不来，所以要显式写 0.0.0.0
-    ssh -N \
-        -o ServerAliveInterval=15 \
-        -o ServerAliveCountMax=3 \
-        -o ExitOnForwardFailure=yes \
-        -o StrictHostKeyChecking=accept-new \
-        -R "0.0.0.0:${JUMP_PORT}:127.0.0.1:${LOCAL_SSHD_PORT}" \
-        "$JUMP_HOST" >>"$LOGFILE" 2>&1 &
+    # 用一层 while 循环包住 ssh —— 断线后自动重连。
+    # 起因: 从热点切到校园网时 TCP 被重置，一次性 ssh -N 不会恢复，
+    #       跳板机端口消失，外部连进来是 Connection refused（看起来像认证被拒）。
+    (
+        while :; do
+            ssh -N \
+                -o ServerAliveInterval=15 \
+                -o ServerAliveCountMax=3 \
+                -o ExitOnForwardFailure=yes \
+                -o StrictHostKeyChecking=accept-new \
+                -o TCPKeepAlive=yes \
+                -R "0.0.0.0:${JUMP_PORT}:127.0.0.1:${LOCAL_SSHD_PORT}" \
+                "$JUMP_HOST" >>"$LOGFILE" 2>&1
+            echo "[$(date '+%F %T')] 隧道断开，3 秒后重连" >>"$LOGFILE"
+            sleep 3
+        done
+    ) </dev/null >>"$LOGFILE" 2>&1 &
     echo $! > "$PIDFILE"
     echo "on $(date '+%F %T')" > "$STATEFILE"
 
@@ -99,6 +109,8 @@ cmd_off() {
 
     # 兜底: 杀掉任何残留的到该跳板机的 -R 隧道
     pkill -f "ssh .*-R 0.0.0.0:${JUMP_PORT}:127.0.0.1:${LOCAL_SSHD_PORT}.*${JUMP_HOST}" 2>/dev/null && stopped=1
+    # 循环本身也要杀，否则会马上把 ssh 拉起来
+    pkill -f "expose-ssh.*${JUMP_PORT}" 2>/dev/null
 
     say "✓ 隧道已断"
     [ "$stopped" = "1" ] && say "  跳板机的 $JUMP_PORT 端口随隧道消失，外部无法再连"
