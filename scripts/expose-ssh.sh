@@ -36,6 +36,8 @@ LOGIN_USER="${EXPOSE_LOGIN:-$(whoami)}"
 JUMP_PORT="${EXPOSE_PORT:-22001}"
 LOCAL_SSHD_PORT=22
 RUNDIR="$HOME/.expose-ssh"
+PLIST="$HOME/Library/LaunchAgents/com.local.expose-ssh.plist"
+LABEL="com.local.expose-ssh"
 PIDFILE="$RUNDIR/tunnel.pid"
 LOGFILE="$RUNDIR/tunnel.log"
 STATEFILE="$RUNDIR/state"
@@ -63,10 +65,24 @@ is_up() {
 }
 
 cmd_on() {
-    if is_up; then
-        say "✓ 隧道已经在跑  pid=$(cat "$PIDFILE")"
-        return 0
+    # 有 LaunchAgent 就用它 —— 开机自启 + 崩溃自动拉起，比脚本里 while 循环可靠
+    if [ -f "$PLIST" ]; then
+        launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null
+        if launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null; then
+            sleep 4
+            if launchctl print "gui/$(id -u)/$LABEL" 2>/dev/null | grep -q "state = running"; then
+                say "✓ 已由 launchd 托管（开机自启）  pid=$(launchctl print "gui/$(id -u)/$LABEL" 2>/dev/null | awk '/pid =/{print $3; exit}')"
+                sleep 1
+                local jh; jh=$(ssh -G "$JUMP_HOST" | awk '/^hostname /{print $2}')
+                say ""
+                say "  从外面连："
+                say "    ssh -p $JUMP_PORT ${LOGIN_USER}@$jh"
+                return 0
+            fi
+        fi
+        say "  launchd 启动失败，回退到脚本托管"
     fi
+
     need_sshd || return 1
 
     say "→ 建立反向隧道 $JUMP_HOST:$JUMP_PORT -> 127.0.0.1:$LOCAL_SSHD_PORT"
@@ -114,6 +130,10 @@ cmd_on() {
 
 cmd_off() {
     local stopped=0
+    if [ -f "$PLIST" ]; then
+        launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null && stopped=1
+        say "  ✓ 已停止 launchd 托管"
+    fi
     if is_up; then
         kill "$(cat "$PIDFILE")" 2>/dev/null && stopped=1
         sleep 1
@@ -142,7 +162,10 @@ cmd_status() {
         say "本机 sshd   未监听 ✗"
     fi
     say ""
-    if is_up; then
+    if launchctl print "gui/$(id -u)/$LABEL" 2>/dev/null | grep -q "state = running"; then
+        say "托管方式    launchd（开机自启）"
+        say "隧道状态    运行中"
+    elif is_up; then
         say "隧道状态    运行中  pid=$(cat "$PIDFILE")"
         say "启动时间    $(cat "$STATEFILE" 2>/dev/null | awk '{print $2" "$3}')"
     else
@@ -154,7 +177,23 @@ cmd_status() {
     tail -3 "$LOGFILE" 2>/dev/null | sed 's/^/    /' || say "    (空)"
 }
 
+# 前台跑一条 ssh（不带 while 循环）—— 交给 launchd 的 KeepAlive 重启。
+# 比脚本自己 while 循环更可靠：launchd 会在崩溃、唤醒、切网后自动拉起。
+cmd_run() {
+    need_sshd || return 1
+    exec ssh -N \
+        -i "$RELAY_KEY" -o IdentitiesOnly=yes \
+        -o ServerAliveInterval=15 \
+        -o ServerAliveCountMax=3 \
+        -o ExitOnForwardFailure=yes \
+        -o StrictHostKeyChecking=accept-new \
+        -o TCPKeepAlive=yes \
+        -R "0.0.0.0:${JUMP_PORT}:127.0.0.1:${LOCAL_SSHD_PORT}" \
+        "${RELAY_USER}@${JUMP_HOST}"
+}
+
 case "${1:-status}" in
+    run)    cmd_run ;;
     on)     cmd_on ;;
     off)    cmd_off ;;
     status) cmd_status ;;
