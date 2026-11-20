@@ -77,6 +77,38 @@ DEFAULT_URL_FILE = os.path.expanduser("~/.v2rayn-tun/sub-url")
 #         public-key: xxx
 #         short-id: xxx
 
+def _strip_comment(s):
+    """去掉 YAML 行内注释。
+
+    YAML 里 `#` 前面有空白就是注释，除非在引号内。
+
+    实测踩过：上游把线路名写在注释里 ——
+
+        server: 72.249.203.81 #CN2线路中转节点1
+        port: 12442
+
+    不剥注释的话，server 会变成 "72.249.203.81 #CN2线路中转节点1"，
+    拼出来的 vless 链接是：
+
+        vless://uuid@72.249.203.81 #CN2线路中转节点1:12442?...
+                                     ↑ 这里断开了，port 也被吞掉
+
+    v2rayN 拿到这种链接，节点名会变成一整串 SQL 参数，而且连不上。
+    """
+    s = s.strip()
+    # 引号内的 # 不是注释
+    in_q = None
+    for i, ch in enumerate(s):
+        if in_q:
+            if ch == in_q:
+                in_q = None
+        elif ch in ('"', "'"):
+            in_q = ch
+        elif ch == "#" and (i == 0 or s[i-1] in " \t"):
+            return s[:i].rstrip()
+    return s
+
+
 def _unquote(s):
     s = s.strip()
     if len(s) >= 2 and s[0] == s[-1] and s[0] in ('"', "'"):
@@ -86,7 +118,7 @@ def _unquote(s):
 
 def _scalar(s):
     """把 YAML 标量转成 Python 值"""
-    s = s.strip()
+    s = _strip_comment(s)
     if s in ("true", "True"):
         return True
     if s in ("false", "False"):
