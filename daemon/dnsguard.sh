@@ -23,12 +23,11 @@ set -u
 DESIRED_DNS="223.5.5.5 119.29.29.29"
 BASE=/usr/local/libexec/v2rayn-dnsguard
 LOG=/var/log/v2rayn-dnsguard.log
-ADDR_STATE=/var/run/v2rayn-netguard.addr
+BOUND_STATE=/var/run/v2rayn-tun.bound
 RESTART_STAMP=/var/run/v2rayn-netguard.restart
 # 记录被我们改掉之前的原始 DNS。放在持久位置(不是 /var/run), 因为系统 DNS 设置
 # 本身是持久化的 —— 重启后代理若没起来, 也要能把 DNS 还回去。
 ORIG_DNS=$BASE/origdns
-PROXY_PORT=10808
 
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >>"$LOG"; }
 
@@ -68,25 +67,13 @@ is_onlink() {
 PRIMARY_IF=$(/sbin/route -n get default 2>/dev/null | awk '/interface:/{print $2}')
 [ -z "$PRIMARY_IF" ] && exit 0
 
-# ================= 地址状态: 无条件先记录 =================
-# 必须放在最前面, 且与"代理是否在跑"无关。
-# 理由: 网络变化可能发生在 v2rayN 关闭期间。如果只在代理运行时才记录,
-#       下次打开 v2rayN 会看到"地址变过"而白白重启一次 TUN —— 表现为
-#       刚打开就闪断一下。
-# 同时这也保证了先落状态再做动作(见下方"问题 2"的说明)。
 CUR_ADDR=$(/sbin/ifconfig "$PRIMARY_IF" 2>/dev/null | awk '/inet /{print $2; exit}')
-LAST_ADDR=$(/bin/cat "$ADDR_STATE" 2>/dev/null || true)
-ADDR_CHANGED=0
-if [ -n "$CUR_ADDR" ] && [ "$CUR_ADDR" != "$LAST_ADDR" ]; then
-    ADDR_CHANGED=1
-    /bin/echo "$CUR_ADDR" > "$ADDR_STATE"
-fi
 
 # ================= 问题 3: TUN 不在时, 把 DNS 还回原样 =================
 # 当初改 DNS 是为了让查询跟随默认路由进 TUN —— on-link 的 DNS 会绕过劫持。
 # TUN 不在了这个改动就失去意义, 留着会让系统残留一处非用户设置的配置。
 # 触发时机: 退出 v2rayN 后 run-tun.sh 撤掉 TUN 时会主动 kickstart 本守护。
-if ! /usr/sbin/lsof -nP -iTCP:"$PROXY_PORT" -sTCP:LISTEN 2>/dev/null | grep -q LISTEN; then
+if ! /usr/bin/pgrep -x v2rayN >/dev/null; then
     SVC3=$(svc_for_if "$PRIMARY_IF")
     if [ -n "$SVC3" ]; then
         CUR3=$(get_dns "$SVC3")
@@ -95,13 +82,13 @@ if ! /usr/sbin/lsof -nP -iTCP:"$PROXY_PORT" -sTCP:LISTEN 2>/dev/null | grep -q L
             if [ -f "$ORIG_DNS" ]; then
                 ORIG=$(/bin/cat "$ORIG_DNS")
                 /usr/sbin/networksetup -setdnsservers "$SVC3" $ORIG
-                log "代理端口 $PROXY_PORT 已下线 -> 还原 DNS「$SVC3」为原值: $ORIG"
+                log "v2rayN 已退出 -> 还原 DNS「$SVC3」为原值: $ORIG"
             else
                 # 没有原值记录(例如本逻辑上线前 DNS 就被改过) -> 还原为"自动",
                 # 即由 DHCP/RA 下发, 这是系统未被干预时的默认状态
                 ORIG="Empty"
                 /usr/sbin/networksetup -setdnsservers "$SVC3" Empty
-                log "代理端口 $PROXY_PORT 已下线 -> DNS「$SVC3」还原为自动 (无原值记录)"
+                log "v2rayN 已退出 -> DNS「$SVC3」还原为自动 (无原值记录)"
             fi
             flush_dns
             sleep 1
@@ -114,20 +101,15 @@ if ! /usr/sbin/lsof -nP -iTCP:"$PROXY_PORT" -sTCP:LISTEN 2>/dev/null | grep -q L
 fi
 
 # ================= 问题 2: 本机地址变化 -> 重启 TUN =================
-# 状态已在文件开头无条件记录(先落状态再做动作), 这里只负责决定要不要重启。
-# 这样即使在"重启 TUN -> run-tun 反过来 kickstart 本脚本 -> 本进程被 SIGTERM"
-# 的情况下, 地址状态也已经落盘, 下一次不会重复判定为变化。
-if [ "$ADDR_CHANGED" = 1 ] && [ -n "$LAST_ADDR" ]; then
-    # 防抖: 60 秒内只重启一次, 避免网络抖动导致反复重建 TUN
+# 只有 run-tun 在接口就绪后才更新基线。节流、抢占或重启失败不会吞掉变化。
+BOUND=$(/bin/cat "$BOUND_STATE" 2>/dev/null || true)
+if [ -n "$CUR_ADDR" ] && [ -n "$BOUND" ] && [ "$BOUND" != "$PRIMARY_IF $CUR_ADDR" ]; then
     NOW=$(/bin/date +%s)
     LAST_RESTART=$(/bin/cat "$RESTART_STAMP" 2>/dev/null || echo 0)
-    if [ $((NOW - LAST_RESTART)) -ge 60 ]; then
+    if [ "$NOW" -lt "$LAST_RESTART" ] || [ $((NOW - LAST_RESTART)) -ge 60 ]; then
         /bin/echo "$NOW" > "$RESTART_STAMP"
-        log "网络地址变化 $LAST_ADDR -> $CUR_ADDR, 重启 TUN 让 sing-box 重新绑定出站"
-        /bin/launchctl kickstart -k system/com.local.v2rayn-tun 2>/dev/null || true
-        sleep 8
-    else
-        log "网络地址变化 $LAST_ADDR -> $CUR_ADDR (距上次重启不足 60 秒, 跳过重启)"
+        log "网络地址变化 $BOUND -> $PRIMARY_IF $CUR_ADDR, 重启 TUN 让 sing-box 重新绑定出站"
+        /bin/launchctl kickstart -k system/com.local.v2rayn-tun || log "重启失败，下次防抖结束后重试"
     fi
 fi
 

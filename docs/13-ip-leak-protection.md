@@ -88,7 +88,24 @@ echo 2400 > ~/Library/Application\ Support/v2rayN/no-sleep-timeout   # 秒
 
 **最有说服力的是出口 IP 那一列** —— 它直接证明没有任何一秒钟走的是直连。
 
-## 防护二：kill-switch
+## 当前的 TUN 重建保护（2026-11-20）
+
+v2rayN 运行期间，守护先给 IPv4 和 IPv6 各装两条覆盖默认公网出口的 `/1` 黑洞路由，再启动 sing-box。TUN 就绪后，更具体的前缀接管流量，国内、国外和直连例外按本机配置分流。10808 下线或 Wi-Fi 断开不会解除保护。旧 sing-box 退出后，黑洞路由在内核中继续生效，直到新接口接管。守护发现 v2rayN 已退出时，清理本项目的路由。
+
+这个机制保护会回落到默认出口的连接。显式绑定其他接口、已配置的旁路网段、其他 VPN 注入的更具体路由各自遵循系统选路。首次打开 v2rayN 后，守护按 5 秒间隔发现进程，四条路由装好后保护才生效。
+
+已有安装先关闭 Claude 和 AdsPower，保持 v2rayN 打开，在仓库根目录执行：
+
+```bash
+sudo ./install.sh --guards-only
+/usr/bin/python3 /usr/local/libexec/v2rayn-tun/route-guard.py status
+```
+
+升级验收分两个时刻。重建窗口查询 `1.1.1.1` 和 `2606:4700:4700::1111` 应命中 `BLACKHOLE`；恢复后，同一对地址应进入当前 TUN。单独运行 `status` 只检查四条兜底路由是否存在。两项检查都不发 Claude 业务请求。
+
+**2026-11-20 本机升级实测。** 重建窗口中两个地址均命中黑洞，接口恢复后均进入 `utun7`。透明 TUN 和显式 SOCKS 请求同一 Cloudflare 测试站，均返回 `198.3.122.187`。校园网关走 `en0`，WireGuard 对端走 `utun1`。接口编号和出口 IP 均为当次观测值。这次验收覆盖守护重启，未做真实 Wi-Fi 切换或 Claude 对话。
+
+## 早期实现与测试（2026-10）
 
 原理：**代理不可用时，不要撤 TUN**。
 
@@ -96,7 +113,6 @@ echo 2400 > ~/Library/Application\ Support/v2rayN/no-sleep-timeout   # 秒
 代理掉线 + 保持 TUN:
   国内流量 -> direct 出口 -> 正常 ✓
   国外流量 -> proxy 出口 -> 10808 已死 -> 连接失败 ✓
-  ★ 任何流量都不会绕出去, 真实 IP 永远不暴露 ★
 ```
 
 **为什么不会死锁**：`sing-box.json` 里有 `"auto_detect_interface": true`，
@@ -110,9 +126,7 @@ sing-box 的 `direct` 出口会自动绑定物理网卡、不经过 TUN。所以
 | **代理暂时不可用** | v2rayN 进程还在 | **保持 TUN** —— 国外失败但绝不泄漏 ✓ |
 | **用户主动退出** | v2rayN 进程已退出 | **撤掉 TUN** —— 干净退出，不留痕迹 ✓ |
 
-这样"**任何意外都不漏真实 IP**"和"**退出即干净**"两个需求同时满足，不冲突。
-
-代码就在 `run-tun.sh` 主循环里，判据是 `v2rayn_alive()`。
+这个版本覆盖了代理端口下线且 TUN 仍然存活的情形。
 
 ### 实测
 
@@ -145,13 +159,7 @@ sing-box pid   93451 = 基线, 从未重建 ✓
 
 重开 v2rayN → 8 秒内 TUN 恢复 → 出口 IP 回到 `48.47.17.149` ✓
 
-### 逃生舱
-
-需要"代理不在了也保持 TUN"（比如长时间只出国内流量）时：
-
-```bash
-touch ~/Library/Application\ Support/v2rayN/killswitch-always
-```
+旧版的 `killswitch-always` 文件开关已停用。
 
 ## 遗留问题
 

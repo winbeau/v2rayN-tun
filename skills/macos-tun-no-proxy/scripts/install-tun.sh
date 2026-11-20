@@ -44,6 +44,7 @@ SRS_SRC="$TARGET_HOME/Library/Application Support/v2rayN/bin/srss"
 [ -d "$SRS_SRC" ] || fail "找不到 v2rayN 的规则集目录: $SRS_SRC"
 
 # ---------- 1. 复制 v2rayN 的运行时文件 ----------
+/usr/bin/python3 "$SCRIPT_DIR/_clients_guard.py" || fail "请先关闭正在使用代理的客户端，再执行安装"
 echo "--- 1. 复制 sing-box 与规则集 ---"
 mkdir -p "$BASE_TUN/rules"
 cp "$SB_SRC" "$BASE_TUN/sing-box"
@@ -67,7 +68,10 @@ install_subst() {   # $1=源  $2=目标  $3=权限
 }
 install_subst "$SCRIPT_DIR/run-tun.sh" "$BASE_TUN/run-tun.sh"   755
 install_subst "$SCRIPT_DIR/dnsguard.sh" "$BASE_GUARD/dnsguard.sh" 755
-install_subst "$SKILL_DIR/assets/sing-box.json" "$BASE_TUN/config.json" 644
+/usr/bin/install -o root -g wheel -m 755 "$SCRIPT_DIR/route-guard.py" "$BASE_TUN/route-guard.py" || fail "断流保护安装失败"
+if [ ! -e "$BASE_TUN/config.json" ]; then
+    install_subst "$SKILL_DIR/assets/sing-box.json" "$BASE_TUN/config.json" 644
+fi
 echo "   run-tun.sh / dnsguard.sh / config.json"
 
 # ---------- 3. 权限收紧 ----------
@@ -143,10 +147,6 @@ for p in $SERVICES; do
     fi
 done
 
-# 记录当前网络地址作为基线, 避免守护误判为"网络变化"
-IFACE=$(route -n get default 2>/dev/null | awk '/interface:/{print $2}')
-[ -n "$IFACE" ] && ifconfig "$IFACE" 2>/dev/null | awk '/inet /{print $2; exit}' > /var/run/v2rayn-netguard.addr
-
 # 用户级 LaunchAgent (让 v2rayN 登录自启)
 # 注意: root 无法用 sudo -u 直接操作用户的 GUI domain, 必须走 gui/<uid>
 TARGET_UID=$(id -u "$TARGET_USER")
@@ -171,7 +171,7 @@ done
 if [ "$UP" = "1" ]; then
     echo "   TUN 已建立 ✓"
 else
-    echo "   ⚠ TUN 未建立 (v2rayN 未运行或端口 10808 未监听时会保持关闭, 这是设计行为)"
+    echo "   TUN 未建立。v2rayN 运行时请检查 /var/log/v2rayn-tun.err.log"
 fi
 
 LOADED_OK=1
@@ -199,7 +199,7 @@ else
     echo "⚠️  安装完成, 但有守护未加载 (见上)"
 fi
 echo "   日志:   /var/log/v2rayn-tun.log   /var/log/v2rayn-dnsguard.log"
-echo "   开关:   touch \"$TARGET_HOME/Library/Application Support/v2rayN/tun-disabled\"    # 临时关 TUN"
+echo "   开关:   打开 v2rayN 启用 TUN，退出后解除保护"
 echo "           echo 1500 > \"$TARGET_HOME/Library/Application Support/v2rayN/tun-mtu\"   # 临时改 MTU"
 echo "   卸载:   sudo $SCRIPT_DIR/uninstall-tun.sh"
 

@@ -46,6 +46,19 @@ if [ -n "${TARGET_HOME:-}" ] && [ -n "${TARGET_USER:-}" ]; then
     done
 fi
 
+# bootout 异步完成；先等守护退出，避免清理后又被重新加上。
+if [ -f "$BASE_TUN/route-guard.py" ]; then
+    for _ in {1..20}; do
+        launchctl print system/com.local.v2rayn-tun >/dev/null 2>&1 || break
+        sleep 1
+    done
+    if launchctl print system/com.local.v2rayn-tun >/dev/null 2>&1; then
+        echo "TUN 守护仍在运行，请重新执行卸载" >&2
+        exit 1
+    fi
+    /usr/bin/python3 "$BASE_TUN/route-guard.py" off || exit 1
+    rm -f /var/run/v2rayn-tun.bound /var/run/v2rayn-tun.gap-check /var/run/v2rayn-route-guard.lock
+fi
 echo "--- 3. 删除程序文件 ---"
 for d in "$BASE_TUN" "$BASE_GUARD" "$BASE_SLEEP"; do
     if [ -d "$d" ]; then

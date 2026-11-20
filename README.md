@@ -76,15 +76,19 @@ TUN 的覆盖路由里有一条 `8.0.0.0/5`，范围覆盖 `8.0.0.0` 到 `15.255
 ```
 
 
-## 三个免 sudo 开关
+## v2rayN 开关与断流保护
 
-装完之后日常调整不需要密码，最多 5 秒生效：
+v2rayN 是 TUN 的开关。守护发现 GUI 启动后先安装四条内核黑洞路由（IPv4、IPv6 各两个 /1），再建立 TUN。Wi-Fi 或 10808 下线时继续保留分流，sing-box 重建时，原本将退回物理默认路由的流量会被丢弃。配置里的节点和内网排除项保留旁路。GUI 退出后，守护清理本项目的路由。首次打开 GUI 到守护发现进程有一个轮询间隔，启动 Claude 前可先检查：
 
 ```bash
-# 临时关闭 TUN，回到纯 v2rayN 本地代理
-touch ~/Library/Application\ Support/v2rayN/tun-disabled
-rm    ~/Library/Application\ Support/v2rayN/tun-disabled
+/usr/bin/python3 /usr/local/libexec/v2rayn-tun/route-guard.py status
+```
 
+已有安装可先退出 Claude Code、Claude 桌面端和 AdsPower，再执行 `sudo ./install.sh --guards-only`。它仅更新守护，保留当前节点和配置。断流保护作用于默认路由；显式绑定其他接口、排除网段及其他 VPN 下发的更具体路由仍按系统规则处理。出现 /1 路由所有权冲突时，守护会报告错误并重试。
+
+这些本机设置会在下次建立 TUN 时读取：
+
+```bash
 # 临时调 MTU（576-9000）。生成后会用 sing-box check 校验，失败自动回退
 echo 1500 > ~/Library/Application\ Support/v2rayN/tun-mtu
 rm   ~/Library/Application\ Support/v2rayN/tun-mtu
@@ -93,7 +97,7 @@ rm   ~/Library/Application\ Support/v2rayN/tun-mtu
 vim ~/.v2rayn-tun/tun-exclude.txt
 ```
 
-三个文件都只影响本机 TUN，守护只读不执行。
+旧的 `tun-disabled` 和 `killswitch-always` 文件已停用。
 
 ## 守护进程
 

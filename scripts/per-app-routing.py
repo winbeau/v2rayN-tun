@@ -481,6 +481,17 @@ def patch(cfg, node_link):
     out = json.loads(json.dumps(cfg))
     changed = []
 
+    rules = out.setdefault("route", {}).setdefault("rules", [])
+    before = len(rules)
+    rules[:] = [r for r in rules if not (
+        r.get("outbound") == NODE_TAG and "process_name" in r
+    )]
+    if len(rules) != before:
+        changed.append(f"清理了 {before - len(rules)} 条旧进程规则")
+    # 空的 process_name 在 sing-box 中匹配所有进程。
+    if not TARGET_PROCESSES:
+        return out, changed
+
     ob = build_outbound(node_link)
     name = urllib.parse.unquote(urllib.parse.urlparse(node_link).fragment)
 
@@ -494,12 +505,6 @@ def patch(cfg, node_link):
     else:
         obs[idx] = ob
         changed.append(f"更新出站 [{NODE_TAG}] -> {ob['server']}:{ob['server_port']}  ({name})")
-
-    # ── 2. 加/更新进程规则 ──
-    rules = out.setdefault("route", {}).setdefault("rules", [])
-    # 先删掉旧的同名规则
-    before = len(rules)
-    rules[:] = [r for r in rules if r.get("outbound") != NODE_TAG]
 
     rule = collections.OrderedDict([
         ("process_name", list(TARGET_PROCESSES)),
@@ -519,8 +524,6 @@ def patch(cfg, node_link):
     rules.insert(insert_at, rule)
     changed.append(f"插入进程规则到 route.rules[{insert_at}]: "
                    f"{', '.join(TARGET_PROCESSES)} -> {NODE_TAG}")
-    if before != len(rules) - 1:
-        changed.append(f"(清理了 {before - (len(rules) - 1)} 条旧规则)")
 
     return out, changed
 
@@ -557,19 +560,21 @@ def main():
 
     base = LIVE if args.action == "apply" else (LIVE if os.path.exists(LIVE) else SRC)
     cfg = load(base)
-    node_link, node_name = fetch_residential_node(args.sub)
+    node_link = None
+    if TARGET_PROCESSES:
+        node_link, node_name = fetch_residential_node(args.sub)
 
-    print(f"节点来源: 订阅 {args.sub}   用的是「{node_name}」", file=sys.stderr)
+        print(f"节点来源: 订阅 {args.sub}   用的是「{node_name}」", file=sys.stderr)
 
-    # ★ 预检: node-direct 不通的话, 被豁免的进程会完全没网 —— 比泄漏更糟
-    if not args.skip_check:
-        print("  正在实测这个节点能否连通 ...", file=sys.stderr)
-        ok, info = node_is_alive(node_link)
-        if ok is False:
-            sys.exit(f"✗ 节点不可用 ({info}) —— 拒绝应用。\n"
-                     f"  如果这条线路被阻断了, 用 --sub sub 试试另一条:\n"
-                     f"    ./per-app-routing.py plan --sub sub")
-        print(f"  ✓ 节点可用 ({info})", file=sys.stderr)
+        # ★ 预检: node-direct 不通的话, 被豁免的进程会完全没网 —— 比泄漏更糟
+        if not args.skip_check:
+            print("  正在实测这个节点能否连通 ...", file=sys.stderr)
+            ok, info = node_is_alive(node_link)
+            if ok is False:
+                sys.exit(f"✗ 节点不可用 ({info}) —— 拒绝应用。\n"
+                         f"  如果这条线路被阻断了, 用 --sub sub 试试另一条:\n"
+                         f"    ./per-app-routing.py plan --sub sub")
+            print(f"  ✓ 节点可用 ({info})", file=sys.stderr)
 
     newcfg, changed = patch(cfg, node_link)
 

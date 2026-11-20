@@ -31,6 +31,7 @@ WATCH = [
     ("SunBrowser", "AdsPower 指纹浏览器 (Claude 专用)"),
     ("AdsPower",   "AdsPower 客户端"),
     ("claude",     "Claude Code (终端里跑的)"),
+    ("Claude",     "Claude 桌面端"),
 ]
 
 

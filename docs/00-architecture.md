@@ -99,8 +99,8 @@ sudo ./scripts/switch-cn-node.py apply --node selab-reality
 
 | 组件 | 层级 | 职责 | 开关 |
 |---|---|---|---|
-| `com.local.v2rayn-tun` | root daemon | 建/撤 TUN；kill-switch；检测地址变化重建 | v2rayN 启停 |
-| `com.local.v2rayn-dnsguard` | root daemon | 网络切换后修正 DNS，避免被 on-link DNS 污染 | 自动 |
+| `com.local.v2rayn-tun` | root daemon | 建立内核兜底路由，维护 TUN 进程与接口，退出时清理路由 | v2rayN 启停 |
+| `com.local.v2rayn-dnsguard` | root daemon | 修正 DNS，按默认接口和 IPv4 地址的变化触发重建 | 自动 |
 | `com.local.v2rayn-sleepguard` | root daemon | 合盖不休眠 + 过热保护 | `no-sleep-timeout` |
 | `com.local.v2rayn-quitguard` | 用户 agent | 拦截 Cmd+Q 防误退出 | `allow-quit` |
 | `com.local.v2rayn-subserver` | 用户 agent | 把 Clash 订阅转成 v2rayN 认的格式 | 自动 |
@@ -113,9 +113,9 @@ DNS / 端口 / kill-switch）。守护本身常驻，但不产生任何流量影
 
 | 文件 | 角色 |
 |---|---|
-| `config/sing-box.json` | **唯一事实来源**（仓库） |
-| `/usr/local/libexec/v2rayn-tun/config.json` | 安装后的实体 |
-| `/usr/local/libexec/v2rayn-tun/config.run.json` | 运行时（只在 `config.json` 基础上换 MTU） |
+| `config/sing-box.json` | 首次安装模板 |
+| `/usr/local/libexec/v2rayn-tun/config.json` | 本机分流配置，升级守护时保留 |
+| `/usr/local/libexec/v2rayn-tun/config.run.json` | 本次启动使用的配置，包含 MTU、排除项和比兜底路由更具体的 TUN 前缀 |
 
 **v2rayN 侧还有两处独立配置**（GUI 里改，不在仓库）：
 
@@ -124,8 +124,7 @@ DNS / 端口 / kill-switch）。守护本身常驻，但不产生任何流量影
 | 路由设置 → `V4-禁直连(TUN 专用)` | 决定 xray（第 2 层）怎么走 |
 | 用 `scripts/make-routing-profile.py` 生成 | 见上文"两层路由" |
 
-**⚠️ 运行时脚本可能再改线上配置**（如 `per-app-routing.py apply` 会加 `node-direct`
-出站和进程规则）。这类改动**不会自动回写仓库** —— 重装后需要重新执行对应脚本。
+运行时脚本可能改动本机配置。`per-app-routing.py` 在进程名单为空时清除旧的托管进程规则，跳过节点探测；名单非空时才插入进程规则。本机定制与仓库模板可以不同。
 检查漂移：
 
 ```bash
@@ -135,14 +134,12 @@ diff <(python3 -m json.tool config/sing-box.json) \
 
 ## 用户可操作的开关
 
-均为 `~/Library/Application Support/v2rayN/` 下的**文件存在性与内容**：
+TUN 跟随 v2rayN 进程启停。旧的 `tun-disabled` 和 `killswitch-always` 文件已停用。下列相对路径位于 `~/Library/Application Support/v2rayN/`。
 
 | 文件 | 作用 |
 |---|---|
-| `tun-disabled` | 存在则不建 TUN |
 | `tun-mtu` | 内容为 MTU 数值（默认 1500） |
-| `~/.v2rayn-tun/tun-exclude.txt` | 不经过 TUN 的网段（校园网、WireGuard 段）| 每行一个 CIDR，守护每次启动合并 |
-| `killswitch-always` | 存在则 v2rayN 退出后也保持 TUN |
+| `~/.v2rayn-tun/tun-exclude.txt` | 不经过 TUN 的网段（校园网、WireGuard 段），每行一个 CIDR，守护每次启动合并 |
 | `no-sleep-timeout` | 合盖放开睡眠的空闲秒数（默认 2400） |
 | `allow-quit` | 存在则放行 Cmd+Q |
 

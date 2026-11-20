@@ -27,6 +27,51 @@ TARGET_HOME=$(dscl . -read "/Users/$TARGET_USER" NFSHomeDirectory 2>/dev/null | 
 [ -d "$TARGET_HOME" ] || fail "无法确定登录用户主目录 (user=$TARGET_USER)"
 echo "目标用户: $TARGET_USER  ($TARGET_HOME)"
 
+if [ "${1:-}" = "--guards-only" ]; then
+    [ -x "$BASE_TUN/sing-box" ] && [ -f "$BASE_TUN/config.json" ] || fail "请先完成首次安装"
+    /usr/bin/python3 "$REPO/scripts/_clients_guard.py" || fail "请先关闭正在使用代理的客户端"
+    backup=$(mktemp -d "$BASE_TUN/guards-backup.XXXXXX") || exit 1
+    cp -p "$BASE_TUN/run-tun.sh" "$BASE_GUARD/dnsguard.sh" "$backup/" || exit 1
+    [ ! -f "$BASE_TUN/route-guard.py" ] || cp -p "$BASE_TUN/route-guard.py" "$backup/" || exit 1
+    echo "旧守护备份在 $backup"
+    cp "$BASE_TUN/config.json" "$backup/preflight.json" &&
+        /usr/bin/python3 "$REPO/daemon/route-guard.py" prepare "$backup/preflight.json" &&
+        "$BASE_TUN/sing-box" check -c "$backup/preflight.json" &&
+        rm "$backup/preflight.json" || fail "现有配置未通过预检"
+    # 运行中的 bash 可能仍在读脚本；在同一文件系统上原子替换。
+    for pair in "route-guard.py:$BASE_TUN" "dnsguard.sh:$BASE_GUARD" "run-tun.sh:$BASE_TUN"; do
+        name=${pair%%:*}
+        dest=${pair#*:}/$name
+        tmp=$(mktemp "${dest}.XXXXXX") || exit 1
+        sed "s|__USER_HOME__|$TARGET_HOME|g" "$REPO/daemon/$name" > "$tmp" &&
+            chmod 755 "$tmp" && mv -f "$tmp" "$dest" || fail "无法更新 $name"
+    done
+    rm -f /var/run/v2rayn-tun.bound /var/run/v2rayn-tun.gap-check
+    launchctl kickstart -k system/com.local.v2rayn-tun || fail "TUN 守护重启失败"
+    if /usr/bin/pgrep -x v2rayN >/dev/null; then
+        for _ in {1..25}; do
+            if [ -s /var/run/v2rayn-tun.bound ] &&
+                /usr/bin/python3 "$BASE_TUN/route-guard.py" status; then
+                [ "$(cat /var/run/v2rayn-tun.gap-check)" = blocked ] ||
+                    fail "兜底路由存在，但重建窗口内测试地址未全部命中黑洞"
+                tun_if=$(/sbin/ifconfig -a | awk '/^[^[:space:]]/{i=$1; sub(/:$/, "", i)} $1=="inet" && $2=="172.19.0.1"{print i}')
+                for ip in 1.1.1.1 2606:4700:4700::1111; do
+                    case "$ip" in *:*) family=-inet6 ;; *) family=-inet ;; esac
+                    got=$(/sbin/route -n get "$family" "$ip" | awk '/interface:/{print $2}')
+                    [ -n "$tun_if" ] && [ "$got" = "$tun_if" ] ||
+                        fail "$ip 的接口为 $got，未验证到项目 TUN"
+                done
+                echo "重建窗口 IPv4/IPv6 测试目标均命中黑洞，恢复后均进入 $tun_if"
+                exit 0
+            fi
+            sleep 1
+        done
+        fail "更新已写入，保护尚未就绪，请检查 /var/log/v2rayn-tun.err.log"
+    fi
+    echo "守护已更新，打开 v2rayN 后启用保护"
+    exit 0
+fi
+
 # 依赖: v2rayN 的运行时文件
 SB_SRC="$TARGET_HOME/Library/Application Support/v2rayN/bin/sing_box/sing-box"
 SRS_SRC="$TARGET_HOME/Library/Application Support/v2rayN/bin/srss"
@@ -35,6 +80,7 @@ SRS_SRC="$TARGET_HOME/Library/Application Support/v2rayN/bin/srss"
 [ -d "$SRS_SRC" ] || fail "找不到 v2rayN 的规则集目录: $SRS_SRC"
 
 # ---------- 1. 复制 v2rayN 的运行时文件 ----------
+/usr/bin/python3 "$REPO/scripts/_clients_guard.py" || fail "请先关闭正在使用代理的客户端，再执行安装"
 echo "--- 1. 复制 sing-box 与规则集 ---"
 
 # 先停守护再复制。两个原因:
@@ -87,7 +133,10 @@ install_subst() {   # $1=源  $2=目标  $3=权限
 }
 install_subst "$REPO/daemon/run-tun.sh" "$BASE_TUN/run-tun.sh"   755
 install_subst "$REPO/daemon/dnsguard.sh" "$BASE_GUARD/dnsguard.sh" 755
-install_subst "$REPO/config/sing-box.json" "$BASE_TUN/config.json" 644
+/usr/bin/install -o root -g wheel -m 755 "$REPO/daemon/route-guard.py" "$BASE_TUN/route-guard.py" || fail "断流保护安装失败"
+if [ ! -e "$BASE_TUN/config.json" ]; then
+    install_subst "$REPO/config/sing-box.json" "$BASE_TUN/config.json" 644
+fi
 echo "   run-tun.sh / dnsguard.sh / config.json"
 
 # ---------- 2b. 退出保护 (Cmd+Q 拦截器) ----------
@@ -294,10 +343,6 @@ for p in $SERVICES; do
     fi
 done
 
-# 记录当前网络地址作为基线, 避免守护误判为"网络变化"
-IFACE=$(route -n get default 2>/dev/null | awk '/interface:/{print $2}')
-[ -n "$IFACE" ] && ifconfig "$IFACE" 2>/dev/null | awk '/inet /{print $2; exit}' > /var/run/v2rayn-netguard.addr
-
 # 用户级 LaunchAgent (让 v2rayN 登录自启)
 # 注意: root 无法用 sudo -u 直接操作用户的 GUI domain, 必须走 gui/<uid>
 TARGET_UID=$(id -u "$TARGET_USER")
@@ -351,7 +396,7 @@ done
 if [ "$UP" = "1" ]; then
     echo "   TUN 已建立 ✓"
 else
-    echo "   ⚠ TUN 未建立 (v2rayN 未运行或端口 10808 未监听时会保持关闭, 这是设计行为)"
+    echo "   TUN 未建立。v2rayN 运行时请检查 /var/log/v2rayn-tun.err.log"
 fi
 
 LOADED_OK=1
@@ -393,6 +438,6 @@ fi
 
 POST
 echo "   日志:   /var/log/v2rayn-tun.log   /var/log/v2rayn-dnsguard.log"
-echo "   开关:   touch \"$TARGET_HOME/Library/Application Support/v2rayN/tun-disabled\"    # 临时关 TUN"
+echo "   开关:   打开 v2rayN 启用 TUN，退出后解除保护"
 echo "           echo 1500 > \"$TARGET_HOME/Library/Application Support/v2rayN/tun-mtu\"   # 临时改 MTU"
 echo "   卸载:   sudo $REPO/uninstall.sh"

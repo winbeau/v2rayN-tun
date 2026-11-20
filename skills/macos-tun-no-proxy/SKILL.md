@@ -121,11 +121,11 @@ scutil --proxy | grep -E 'HTTPEnable|SOCKSEnable'   # 都应为 0
 
 ### 4. 免 sudo 开关
 
-两个用户可写的文件（守护进程每次运行都会读）：
+v2rayN 是 TUN 开关。GUI 运行时维持 IPv4/IPv6 默认流量的内核断流路由，GUI 退出时撤销。排除网段和其他 VPN 的更具体路由继续有效。
 
 ```bash
-# 临时关闭 TUN (排查「是不是 TUN 造成的」时非常有用)
-touch "$HOME/Library/Application Support/v2rayN/tun-disabled"
+# 检查四条内核兜底路由
+/usr/bin/python3 /usr/local/libexec/v2rayn-tun/route-guard.py status
 
 # 临时改 MTU (范围 576-9000, 守护会做 sing-box check 校验并自动回退)
 echo 1500 > "$HOME/Library/Application Support/v2rayN/tun-mtu"
@@ -258,7 +258,7 @@ curl -vsk -o /dev/null --interface en0 --max-time 12 \
 3. `env | grep -i proxy` 为空。
 4. 国内 HTTP 200 且国外 HTTP 204。
 5. `launchctl print system/<label>` 的 `state = running`。
-6. **切换一次网络后，守护日志出现「网络地址变化 → 重启 TUN」，且 15 秒内恢复。**
+6. 连续切网后，防抖期结束的下一次自检会重试，直到 TUN 在最终网络上就绪。
 7. **退出 v2rayN 后系统无残留** —— TUN 接口/路由消失、系统代理关闭、
    **DNS 还原为「自动」**（不是留着我们设的公网 DNS）、10808 端口释放。
    验证：`networksetup -getdnsservers Wi-Fi` 应输出 *There aren't any DNS Servers set*。
@@ -316,7 +316,7 @@ curl -vsk -o /dev/null --interface en0 --max-time 12 \
 
 | 现象 | 首查方向 |
 |---|---|
-| 国内也打不开 | TUN 把整机流量吞了但代理不可用。守护应在 10808 下线时撤掉 TUN —— 检查日志是否有「代理端口已下线, 撤掉 TUN 以免断网」 |
+| 国内也打不开 | 检查 TUN 接口、节点旁路及底层网关。10808 下线期间，v2rayN 仍运行就保持原有分流。 |
 | 国外全挂、国内正常 | 节点问题（见 `deploy-us-proxy`）或 DNS 污染。先跑第 1/2 层定位 |
 | **握手正常但慢到不可用** | **流量超限被服务商限速**。握手只需几 KB，限速掐的是带宽 —— 必须实测吞吐才能发现。实测案例：节点握手 0.64s 正常，但 100KB 传输 15 秒都传不完 |
 | 解析被污染 / 出现假 IPv6 | Bug A：`scutil --dns` 看是否有同网段 DNS |
