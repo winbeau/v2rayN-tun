@@ -1,8 +1,5 @@
 #!/bin/bash
-# 装完 TUN 之后的收尾: 把"国内方向走日本 + 进程豁免 + v2rayN 禁直连"配齐。
-#
-# 为什么需要它: install.sh 只装 sing-box 守护, 装完的配置里【国内仍然直连】,
-# 真实 IP 会泄漏出去。剩下的三件事依赖用户自己的订阅和节点选择, 所以单独一步。
+# 初始分流：国内直接出站，国外走 GUI 选中的节点。
 #
 # 用法:
 #   sudo ./scripts/setup-routing.sh                       # 用默认值
@@ -13,8 +10,7 @@ set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SUB="sub2"
-CN_NODE="日本CN2-3"
-SUBSERVER="http://127.0.0.1:18080"
+CN_NODE="direct"
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -37,7 +33,9 @@ except Exception as e:
     print(f"  读不到配置: {e}"); raise SystemExit
 tags = [o.get('tag') for o in d.get('outbounds', [])]
 print(f"  出站: {tags}")
-print(f"  国内走日本(cn-via-jp): {'✓ 已配' if 'cn-via-jp' in tags else '✗ 未配 —— 国内还是直连'}")
+for rule in d['route']['rules']:
+    if set(rule.get('rule_set') or []) & {'geoip-cn', 'geosite-cn'}:
+        print(f"  国内分流 {rule['rule_set']} → {rule.get('outbound')}")
 print(f"  进程豁免(node-direct): {'✓ 已配' if 'node-direct' in tags else '✗ 未配'}")
 ex = [r for r in d['route']['rules'] if r.get('outbound')=='direct' and r.get('domain_suffix') and 'qq.com' in str(r.get('domain_suffix'))]
 print(f"  直连例外({len(ex[0]['domain_suffix']) if ex else 0} 个域名): {'✓ 已配' if ex else '✗ 未配'}")
@@ -52,12 +50,7 @@ echo "════════ 1. 造 v2rayN 路由项 ════════"
 python3 "$REPO/scripts/make-routing-profile.py"
 
 echo
-echo "════════ 2. 检查两个节点是否可用 ════════"
-echo "  订阅服务: $(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$SUBSERVER/health" 2>/dev/null)"
-echo "  住宅节点 + 国内出口节点会各实测一次 (不通会拒绝应用)"
-
-echo
-echo "════════ 3. 应用 sing-box 路由 ════════"
+echo "════════ 2. 应用 sing-box 路由（国内出站：$CN_NODE） ════════"
 cd "$REPO"
 ./scripts/per-app-routing.py apply --sub "$SUB" --cn-node "$CN_NODE"
 RC=$?

@@ -1,5 +1,15 @@
 # EasyConnect 与国内 DNS 查询冲突
 
+## 2026-11-20 · TUN 断流路由导致国内 DNS 无法出站
+
+同一 Wi-Fi、同一网关下，透明 TUN 请求 DeepSeek API 和百度均在 DNS 阶段超时，Google 返回 204，强制 SOCKS 访问 DeepSeek API 返回 401。守护日志显示连接 AliDNS 的两个 HTTPS 地址立即报 `network is unreachable`。`route -n get -ifscope en0 223.5.5.5` 找不到路由，绑定 en0 并指定 AliDNS IP 的 HTTPS 请求也立即失败。
+
+临时在 en0 上增加带 `-ifscope` 的物理默认路由后，同一 AliDNS 请求完成 TLS 握手。普通未绑定连接查询黑洞测试地址仍命中 lo0。路由守护现会随底层默认网关维护这条接口专用路由，并在退出时清理自己创建的条目。
+
+07:17 热更新后，DeepSeek 的 `/models` 和 `/anthropic/v1/messages` 均在 0.3 秒内完成 TLS，未携带密钥时返回 401；百度返回 200。四条 IPv4/IPv6 黑洞路由仍在。此次验证覆盖 API 传输，真实对话需在已登录的 Harness 重试。
+
+## 2026-11-13 · EasyConnect DNS 循环
+
 2026-11-13，EasyConnect 已连接（utun5，10.99.1.106）时，DeepSeek Harness
 显示 `DeepSeek Messages transport failed`。国内域名查询超时，Google 正常。
 

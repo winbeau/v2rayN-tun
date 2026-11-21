@@ -425,13 +425,13 @@ else
 fi
   cat <<'POST'
 
-  ⚠️ 还差一步（必须做，否则国内方向仍然直连、真实 IP 会泄漏）
+  首次安装后配置国内直连、国外代理的两层分流：
 
-       sudo ./scripts/setup-routing.sh --cn-node 日本CN2-3
+       sudo ./scripts/setup-routing.sh
 
       它做三件事：
         · 给 v2rayN 造一个「V4-禁直连(TUN 专用)」路由项（之后要在 GUI 里选中）
-        · 把 sing-box 的国内方向改成走指定节点（含 DNS，不再用国内 DNS）
+        · 将国内分流设为 direct，国内域名由直连 DNS 解析
         · 加上只认国内 IP 的直连例外（微信/教育/政务）
 
       只想看现状不改动：  ./scripts/setup-routing.sh --check

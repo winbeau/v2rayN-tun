@@ -61,17 +61,21 @@ def run(*args):
     })
 
 
-def routes():
-    """Unscoped exact routes only. netstat abbreviates IPv4 network destinations."""
+def routes(scoped_defaults=None):
+    """Read unscoped routes and optionally the defaults used by interface-bound sockets."""
     table = {}
     for family, version in (("inet", 4), ("inet6", 6)):
         result = run("/usr/sbin/netstat", "-rn", "-f", family)
         result.check_returncode()
         for line in result.stdout.splitlines():
             cols = line.split()
-            if len(cols) < 4 or not cols[2].startswith("U") or "I" in cols[2]:
+            if len(cols) < 4 or not cols[2].startswith("U"):
                 continue
             dest, gateway, flags, iface = cols[:4]
+            if "I" in flags:
+                if scoped_defaults is not None and dest == "default":
+                    scoped_defaults[version, iface] = (gateway, flags, iface)
+                continue
             if dest == "default":
                 dest = "::/0" if version == 6 else "0.0.0.0/0"
             elif version == 4:
@@ -105,7 +109,8 @@ def save(owned):
 
 
 def reconcile(mode, holes=()):
-    table = routes()
+    scoped = {}
+    table = routes(scoped)
     owned = json.loads(STATE.read_text()) if STATE.exists() else {}
     if mode != "off":
         # Detect a competing VPN before modifying either address family.
@@ -124,6 +129,17 @@ def reconcile(mode, holes=()):
     # An existing LAN/VPN route keeps priority. A narrower VPN route also wins
     # over an installed aggregate (e.g. campus /16 inside the configured /8).
     wanted = {}
+    # With an unscoped /1 via lo0, Darwin can return ENETUNREACH for
+    # IP_BOUND_IF on the uplink even though its unscoped default exists.
+    # An IFSCOPE default is eligible for the bound socket, including direct DoH.
+    if mode == "sync":
+        for cidr in ("0.0.0.0/0", "::/0"):
+            default = network(cidr)
+            uplink = table.get(default)
+            if uplink and uplink[2] != "lo0" and "G" in uplink[1]:
+                key = f"{cidr}@{uplink[2]}"
+                if (default.version, uplink[2]) not in scoped or key in owned:
+                    wanted[key] = uplink[0]
     for net in holes:
         default = network("0.0.0.0/0" if net.version == 4 else "::/0")
         row = table.get(default)
@@ -136,21 +152,32 @@ def reconcile(mode, holes=()):
             continue
         wanted[str(net)] = row[0]
 
-    for cidr, gateway in list(owned.items()):
+    def lookup(key):
+        cidr, _, iface = key.partition("@")
         net = network(cidr)
-        if wanted.get(cidr) == gateway and ours(table.get(net), gateway, False):
+        if iface:
+            return net, scoped.get((net.version, iface)), ("-ifscope", iface)
+        return net, table.get(net), ()
+
+    for key, gateway in list(owned.items()):
+        net, row, scope = lookup(key)
+        if wanted.get(key) == gateway and ours(row, gateway, False):
             continue
-        if ours(table.get(net), gateway, False):
-            change("delete", net, gateway)
-            table.pop(net)
-        del owned[cidr]
+        if ours(row, gateway, False):
+            change("delete", net, gateway, *scope)
+            if scope:
+                scoped.pop((net.version, scope[1]))
+            else:
+                table.pop(net)
+        del owned[key]
         save(owned)
-    for cidr, gateway in wanted.items():
-        if cidr in owned or network(cidr) in table:
+    for key, gateway in wanted.items():
+        net, row, scope = lookup(key)
+        if key in owned or row:
             continue
-        owned[cidr] = gateway
+        owned[key] = gateway
         save(owned)  # journal before add so an interrupted run can recover
-        change("add", network(cidr), gateway, "-proto1")
+        change("add", net, gateway, *scope, "-proto1")
     if mode == "off":
         for net in HALVES:
             if ours(table.get(net), LOOP[net.version], True):

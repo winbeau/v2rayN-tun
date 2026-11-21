@@ -70,7 +70,21 @@ class Routes(unittest.TestCase):
     def test_guard_lifecycle(self):
         table = {net("0.0.0.0/0"): ("192.168.1.1", "UG", "en0"),
                  net("192.168.99.0/24"): ("link#10", "U", "utun2")}
+        scoped = {(6, "utun3"): ("fe80::1%utun3", "UGI", "utun3")}
+        def snapshot(defaults):
+            defaults.update(scoped)
+            return table.copy()
+
         def change(action, dest, gw, *flags):
+            if "-ifscope" in flags:
+                iface = flags[flags.index("-ifscope") + 1]
+                key = (dest.version, iface)
+                if action == "delete":
+                    del scoped[key]
+                else:
+                    self.assertNotIn(key, scoped)
+                    scoped[key] = (gw, "UG1I", iface)
+                return
             if action == "delete":
                 del table[dest]
             else:
@@ -78,20 +92,27 @@ class Routes(unittest.TestCase):
                 table[dest] = (gw, "U1B" if "-blackhole" in flags else "U1", "lo0" if "-blackhole" in flags else "en0")
         holes = [net("198.51.100.42"), net("192.168.99.0/24")]
         with tempfile.TemporaryDirectory() as tmp, patch.object(guard, "STATE", Path(tmp)/"owned"), \
-                patch.object(guard, "routes", lambda: table.copy()), patch.object(guard, "change", change):
+                patch.object(guard, "routes", snapshot), patch.object(guard, "change", change):
             guard.reconcile("arm")
             guard.reconcile("sync", holes)
             guard.reconcile("sync", holes)
+            self.assertEqual(scoped[4, "en0"][0], "192.168.1.1")
             del table[net("0.0.0.0/0")]
             guard.reconcile("sync", holes)
+            self.assertNotIn((4, "en0"), scoped)
             self.assertTrue(all(n in table for n in guard.HALVES))
             self.assertNotIn(holes[0], table)
             table[net("0.0.0.0/0")] = ("192.168.2.1", "UG", "en1")
             guard.reconcile("sync", holes)
             self.assertEqual(table[holes[0]][0], "192.168.2.1")
+            self.assertEqual(scoped[4, "en1"][0], "192.168.2.1")
+            table[net("::/0")] = ("fe80::1%utun3", "UG", "utun3")
+            guard.reconcile("sync", holes)
+            del table[net("::/0")]
             guard.reconcile("off")
             guard.reconcile("off")
             self.assertEqual(set(table), {net("0.0.0.0/0"), holes[1]})
+            self.assertEqual(scoped, {(6, "utun3"): ("fe80::1%utun3", "UGI", "utun3")})
             table[guard.HALVES[-1]] = ("fe80::1", "UG", "utun3")
             before = table.copy()
             with self.assertRaises(RuntimeError):

@@ -26,11 +26,12 @@
 | [16](16-cn-direct-ip-leak.md) | 国内直连导致的真实 IP 泄漏（两层规则 + 按进程豁免） | **这个项目有两层国内直连规则**，只改一层，泄漏纹丝不动。 |
 | [17](17-claude-ban-detection-analysis.md) | Claude 封号检测机制调研（含一次证伪） | **细节的具体程度不是可信度** —— 风控看的是「矛盾」，不是「伪装」。 |
 | [18](18-risk-register.md) | 技术风险登记表 | 记录各项风险的处理状态，以及哪些结论需要在本机验收。 |
-| [19](19-routing-implementation.md) | 路由实施记录 | **「国内直连」这个概念本身被取消了** —— 国内走日本、国外走住宅、只有 22 个域名直连。 |
+| [19](19-routing-implementation.md) | 路由实施记录 | 当前国内统一直连，国外走选中节点；含旧国内节点方案与切网测试记录。 |
 | [20](20-node-params-changed.md) | 节点参数被官方改了怎么办 | 节点连不上时，**先比对端口/uuid/公钥有没有变**，再怀疑自己的配置 —— 官方改参数不会通知任何人。 |
 | [21](21-tun-eats-private-networks.md) | TUN 把内网也吃掉了 | `auto_route` 的覆盖路由会把 `10/8`、`192.168` 这些内网一起抓进 TUN —— 校园网、WireGuard、路由器后台全废。 |
 | [22](22-identifying-residential-ip.md) | 怎么判断一个出口 IP 是不是真住宅 | 看 **whois/BGP + PTR**，别看 `ip-api` 的 ISP 字段 —— 它会告诉你 Comcast，实际是别家的段。 |
 | [23](23-easyconnect-dns-loop.md) | EasyConnect 与国内 DNS 查询冲突 | （缺） |
 | [24](24-intermittent-tls-reset.md) | TLS 握手被间歇性重置 | RST 在 8–10 ms 到达、而到节点 RTT 有 190 ms —— 服务器来不及回话，是在路上被掐的；而这种掐断会自己恢复。 |
+| [25](25-local-network-block.md) | 全部代理入口突然不通 | **同一个 IP 从跳板机通、从本机不通** —— 是本地网络的封锁；SSH 只做 TCP 中继，出口 IP 不变。 |
 
 另见 [toolbox](toolbox.md) —— 实际定位问题时用过的命令。

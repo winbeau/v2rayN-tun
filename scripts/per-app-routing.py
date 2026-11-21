@@ -316,6 +316,12 @@ def add_cn_routing(out, cn_link):
     #        即使路由规则写了 direct, 直连一个海外 IP 照样连不上。
     # 这些站点【只认国内 IP】, 经日本节点实测全部 URLError, 直连正常。
     # 加进直连例外 —— 它们本身就是中国机构, 看到中国 IP 完全正常。
+    changed.extend(add_direct_exceptions(out))
+    return changed
+
+
+def add_direct_exceptions(out):
+    changed = []
     wx_domains = [
         # ── 腾讯/微信 ── (qpic.cn 是微信图片 CDN, 连不上就发不出图)
         "qq.com", "weixin.qq.com", "wx.qq.com", "wechat.com", "weixin.com",
@@ -350,7 +356,8 @@ def add_cn_routing(out, cn_link):
     rr = out.setdefault("route", {}).setdefault("rules", [])
     rr[:] = [r for r in rr
              if not (r.get("domain_suffix") == wx_domains and r.get("outbound") == "direct")]
-    pos = next((i for i, r in enumerate(rr) if r.get("outbound") == CN_TAG), len(rr))
+    pos = next((i for i, r in enumerate(rr) if r.get("outbound") == CN_TAG
+                or set(r.get("rule_set") or []) & {"geoip-cn", "geosite-cn"}), len(rr))
     rr.insert(pos, collections.OrderedDict([
         ("outbound", "direct"),
         ("domain_suffix", wx_domains),
@@ -376,7 +383,7 @@ def add_cn_routing(out, cn_link):
         rr2 = out.setdefault("route", {}).setdefault("rules", [])
         rr2[:] = [r for r in rr2
                   if not (r.get("ip_cidr") == direct_ips and r.get("outbound") == "direct")]
-        p2 = next((i for i, r in enumerate(rr2) if r.get("outbound") == CN_TAG), len(rr2))
+        p2 = pos
         rr2.insert(p2, collections.OrderedDict([
             ("outbound", "direct"),
             ("ip_cidr", direct_ips),
@@ -385,7 +392,8 @@ def add_cn_routing(out, cn_link):
 
     dd = out.setdefault("dns", {}).setdefault("rules", [])
     dd[:] = [r for r in dd if not (r.get("domain_suffix") == wx_domains)]
-    dpos = next((i for i, r in enumerate(dd) if r.get("server") == CN_DNS_TAG), len(dd))
+    dpos = next((i for i, r in enumerate(dd) if r.get("server") == CN_DNS_TAG
+                 or "geosite-cn" in (r.get("rule_set") or []) or set(r) == {"server"}), len(dd))
     dd.insert(dpos, collections.OrderedDict([
         ("server", "direct-dns-1"),
         ("domain_suffix", wx_domains),
@@ -606,7 +614,11 @@ def main():
         changed += add_loop_break(newcfg, node_ips)
 
     # 可选: 把国内直连整体换成走某个节点
-    if args.cn_node:
+    if args.cn_node == "direct":
+        from _cn_direct import use_direct
+        use_direct(newcfg)
+        changed.extend(add_direct_exceptions(newcfg))
+    elif args.cn_node:
         # 拿到全部节点链接来挑选
         u0 = SUBSERVER.rsplit("/", 1)[0] + "/" + args.sub
         rawb = urllib.request.urlopen(u0, timeout=20).read().decode().strip()

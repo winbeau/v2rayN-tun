@@ -12,3 +12,7 @@ config/rules/
 .v2rayn-tun/
 ipequal-nodes.txt
 sub-url
+
+# Python 缓存
+__pycache__/
+*.pyc

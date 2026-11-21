@@ -112,8 +112,7 @@ if _mode == "cn-via-jp":
     print("      -> 走日本节点。这是【标准模式】, 不是隐身模式")
     print("         国内站能开, 真实 IP 不泄漏, DNS 也不走国内")
 elif _mode == "direct":
-    print("      -> 直连！这是旧配置, 真实 IP 会泄漏")
-    print("         修: sudo ./scripts/setup-routing.sh --cn-node 日本CN2-3")
+    print("      -> 国内目标使用本地网络出口")
 else:
     print("      -> 走代理。是隐身模式(--strict)或旧配置状态")
 PY

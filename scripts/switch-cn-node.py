@@ -16,6 +16,7 @@ import shutil
 import socket
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -29,13 +30,7 @@ def user_home():
     return Path(pwd.getpwuid(int(os.environ.get('SUDO_UID', os.getuid()))).pw_dir)
 
 
-DIRECT_OUTBOUND = {'type': 'direct', 'tag': CN_TAG, 'connect_timeout': '30s'}
-
-
 def load_node(name, group=None):
-    # 特殊值：不连节点，直连出去
-    if name == 'direct':
-        return dict(DIRECT_OUTBOUND)
     db = user_home() / 'Library/Application Support/v2rayN/guiConfigs/guiNDB.db'
     with sqlite3.connect(db.as_uri() + '?mode=ro', uri=True) as con:
         con.row_factory = sqlite3.Row
@@ -101,7 +96,7 @@ def probe(ob, directory):
     path = directory / 'probe.json'
     write_json(path, {'log': {'level': 'error'}, 'inbounds': [
         {'type': 'mixed', 'listen': '127.0.0.1', 'listen_port': port}],
-        'outbounds': [ob], 'route': {'final': CN_TAG}})
+        'outbounds': [ob], 'route': {'final': ob['tag']}})
     check(path)
     proc = subprocess.Popen([str(SINGBOX), 'run', '-c', str(path)],
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -159,33 +154,29 @@ def main():
         ensure_idle(force=args.force)
     original = LIVE.read_bytes()
     cfg = json.loads(original)
-    indices = [i for i, ob in enumerate(cfg['outbounds']) if ob.get('tag') == CN_TAG]
-    if len(indices) != 1:
-        raise RuntimeError('需要唯一的现有 cn-via-jp 出站；请先配置基础分流')
-    ob = load_node(args.node, args.group)
     candidate = copy.deepcopy(cfg)
-    old = candidate['outbounds'][indices[0]]
-    candidate['outbounds'][indices[0]] = ob
-    if ob.get("type") == "direct":
-        print("国内出站：→ 直连（不经过任何节点）", flush=True)
+    if args.node == 'direct':
+        from _cn_direct import use_direct
+        use_direct(candidate)
+        ob = next(o for o in candidate['outbounds'] if o['tag'] == 'direct')
+        if ob.get('type') != 'direct':
+            raise RuntimeError('direct 出站类型异常')
+        if candidate == cfg:
+            print('国内旧出站及 DNS 已清理，无需重启')
+            return
+        print('国内分流使用 direct，国内解析使用 direct-dns-1。', flush=True)
     else:
+        indices = [i for i, item in enumerate(candidate['outbounds']) if item.get('tag') == CN_TAG]
+        if len(indices) != 1:
+            raise RuntimeError('请先用 setup-routing.sh --cn-node 指定国内节点')
+        old = candidate['outbounds'][indices[0]]
+        ob = load_node(args.node, args.group)
+        candidate['outbounds'][indices[0]] = ob
         print(f'国内出站：{old.get("server")}:{old.get("server_port")} → '
               f'{args.node} ({ob["server"]}:{ob["server_port"]})', flush=True)
 
-    # direct 时把走 jp-dns 的域名改回 direct-dns-1：
-    # jp-dns 是 https://cloudflare-dns.com，direct 模式下会直连去问它，
-    # 国内既慢又可能不通。
-    if ob.get("type") == "direct":
-        n = 0
-        for rule in candidate.get("dns", {}).get("rules", []):
-            if rule.get("server") == "jp-dns":
-                rule["server"] = "direct-dns-1"
-                n += 1
-        if n:
-            print(f"DNS：{n} 条规则 jp-dns → direct-dns-1", flush=True)
     if args.group is not None:
         print(f'节点分组：{args.group}', flush=True)
-    print('仅替换该出站；已有 DNS detour 和路由继续引用同一标签。', flush=True)
     # 临时目录同目标目录仅在 apply 时使用，以便最后原子替换。
     with tempfile.TemporaryDirectory(prefix='cn-switch-',
                                      dir=BASE if args.action == 'apply' else None) as temp:
@@ -214,7 +205,10 @@ def main():
         for _ in range(15):
             try:
                 running = json.loads((BASE / 'config.run.json').read_text())
-                loaded = next(o for o in running['outbounds'] if o.get('tag') == CN_TAG)
+                loaded = next(o for o in running['outbounds'] if o.get('tag') == ob['tag'])
+                if args.node == 'direct' and any(o['tag'] == CN_TAG for o in running['outbounds']):
+                    time.sleep(1)
+                    continue
                 interfaces = subprocess.run(['ifconfig'], capture_output=True, text=True).stdout
                 if loaded == ob and '172.19.0.1' in interfaces:
                     code = fetch('https://api.deepseek.com/models')

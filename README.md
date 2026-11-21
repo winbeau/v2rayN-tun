@@ -22,7 +22,7 @@ TUN 起来后，流量按目标分三路：
 |---|---|---|---|
 | 国外 | `proxy` → `127.0.0.1:10808` → xray → 节点 | 节点 IP | 日常代理 |
 | 例外域名 / IP | `direct` | 真实 IP | 只认国内 IP 的站（微信、教育、政务）|
-| 其余国内 | `cn-via-jp` | 直连或指定节点 | 默认直连 |
+| 其余国内 | `direct` | 本地网络公网 IP | 命中 geosite-cn 或 geoip-cn |
 
 例外清单在 `~/.v2rayn-tun/extra-direct.txt` 和 `extra-direct-ip.txt`，改完重启守护生效。
 
@@ -54,7 +54,7 @@ sudo ./install.sh
 装完还要配路由。这一步依赖你自己的订阅，所以单独执行：
 
 ```bash
-sudo ./scripts/setup-routing.sh --cn-node 日本CN2-3
+sudo ./scripts/setup-routing.sh
 ```
 
 再打开 **v2rayN → 设置 → 路由设置 → 选中「V4-禁直连(TUN 专用)」**。
