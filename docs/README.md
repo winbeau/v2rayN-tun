@@ -33,5 +33,6 @@
 | [23](23-easyconnect-dns-loop.md) | EasyConnect 与国内 DNS 查询冲突 | （缺） |
 | [24](24-intermittent-tls-reset.md) | TLS 握手被间歇性重置 | RST 在 8–10 ms 到达、而到节点 RTT 有 190 ms —— 服务器来不及回话，是在路上被掐的；而这种掐断会自己恢复。 |
 | [25](25-local-network-block.md) | 全部代理入口突然不通 | **同一个 IP 从跳板机通、从本机不通** —— 是本地网络的封锁；SSH 只做 TCP 中继，出口 IP 不变。 |
+| [26](26-expose-ssh.md) | 公网 SSH 挂着但本地看着正常 | **本地进程活着 ≠ 外面能连** —— 去跳板机抓 banner 才算验收，`status`/`heal` 现已这么做。 |
 
 另见 [toolbox](toolbox.md) —— 实际定位问题时用过的命令。

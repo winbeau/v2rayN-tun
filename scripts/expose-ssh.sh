@@ -38,11 +38,14 @@ LOCAL_SSHD_PORT=22
 RUNDIR="$HOME/.expose-ssh"
 PLIST="$HOME/Library/LaunchAgents/com.local.expose-ssh.plist"
 LABEL="com.local.expose-ssh"
+HEAL_LABEL="com.local.expose-ssh-heal"
+HEAL_PLIST="$HOME/Library/LaunchAgents/$HEAL_LABEL.plist"
 PIDFILE="$RUNDIR/tunnel.pid"
 LOGFILE="$RUNDIR/tunnel.log"
 STATEFILE="$RUNDIR/state"
 
 mkdir -p "$RUNDIR"
+SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 
 say() { printf '%s\n' "$*"; }
 
@@ -64,9 +67,36 @@ is_up() {
     [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE" 2>/dev/null)" 2>/dev/null
 }
 
+# 定期自检：本地进程看着正常、对端却没监听的情况，只能从对端发现（见 heal）
+write_heal_plist() {
+    mkdir -p "$(dirname "$HEAL_PLIST")"
+    cat >"$HEAL_PLIST" <<HEALEOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>$HEAL_LABEL</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>$SELF</string>
+        <string>heal</string>
+    </array>
+    <key>StartInterval</key><integer>600</integer>
+    <key>RunAtLoad</key><true/>
+    <key>StandardErrorPath</key><string>$RUNDIR/heal.log</string>
+    <key>StandardOutPath</key><string>$RUNDIR/heal.log</string>
+</dict>
+</plist>
+HEALEOF
+    plutil -lint "$HEAL_PLIST" >/dev/null
+}
+
 cmd_on() {
     # 有 LaunchAgent 就用它 —— 开机自启 + 崩溃自动拉起，比脚本里 while 循环可靠
     if [ -f "$PLIST" ]; then
+        write_heal_plist && launchctl bootout "gui/$(id -u)/$HEAL_LABEL" 2>/dev/null;
+        launchctl bootstrap "gui/$(id -u)" "$HEAL_PLIST" 2>/dev/null
         launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null
         if launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null; then
             sleep 4
@@ -129,8 +159,12 @@ cmd_on() {
 }
 
 cmd_off() {
+    launchctl bootout "gui/$(id -u)/$HEAL_LABEL" 2>/dev/null
+    rm -f "$HEAL_PLIST"
     local stopped=0
     if [ -f "$PLIST" ]; then
+        write_heal_plist && launchctl bootout "gui/$(id -u)/$HEAL_LABEL" 2>/dev/null;
+        launchctl bootstrap "gui/$(id -u)" "$HEAL_PLIST" 2>/dev/null
         launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null && stopped=1
         say "  ✓ 已停止 launchd 托管"
     fi
@@ -173,8 +207,66 @@ cmd_status() {
         say "上次操作    $(cat "$STATEFILE" 2>/dev/null || echo '无记录')"
     fi
     say ""
+    # ⚠️ 本地进程活着 ≠ 隧道能用。2026-11-21 进程连着、跳板机上却没有监听，
+    #    「Error: remote port forwarding failed」刷了几百次，本地完全看不出来。
+    #    必须去跳板机确认端口在听、并且真的连到了本机 sshd。
+    remote_check
+    say ""
     say "最近日志:"
-    tail -3 "$LOGFILE" 2>/dev/null | sed 's/^/    /' || say "    (空)"
+    local logfile="$LOGFILE"
+    launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1 &&
+        [ -s "$RUNDIR/launchd.log" ] && logfile="$RUNDIR/launchd.log"
+    tail -3 "$logfile" 2>/dev/null | sed 's/^/    /' || say "    (空)"
+}
+
+# 自愈：对端不通就重建隧道（本地进程状态不可信，见 remote_check 的注释）
+cmd_heal() {
+    # 刚启动时对端还没绑上，先给 3 次机会再判定，避免自己把自己重启掉
+    for _ in 1 2 3; do
+        remote_alive && break
+        sleep 5
+    done
+    if remote_alive; then
+        say "✓ 隧道可用（$JUMP_HOST:$JUMP_PORT → 本机 sshd）"
+        return 0
+    fi
+    say "· 对端不可达，重建隧道"
+    launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null
+    sleep 2
+    if [ -f "$PLIST" ]; then
+        launchctl bootstrap "gui/$(id -u)" "$PLIST" || { say "✗ launchd 装载失败"; return 1; }
+    else
+        say "✗ 没有 $PLIST，先跑 on"; return 1
+    fi
+    for _ in 1 2 3 4 5 6; do
+        sleep 3
+        remote_alive && { say "✓ 已恢复"; return 0; }
+    done
+    say "✗ 重建后仍不可达，看 $RUNDIR/launchd.log"
+    return 1
+}
+
+# 在跳板机上验证：一路连到本机 sshd 才算通（能换到 SSH banner）
+# 只连端口不抓 banner 是不够的 —— 端口在听但隧道没连到本机时也"能连上"。
+remote_probe() {
+    ssh -T -i "$RELAY_KEY" -o IdentitiesOnly=yes -o BatchMode=yes \
+        -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new \
+        "${RELAY_USER}@${JUMP_HOST}" \
+        "timeout 6 bash -c 'exec 3<>/dev/tcp/127.0.0.1/${JUMP_PORT}; head -c 8 <&3'" 2>/dev/null
+}
+
+remote_alive() { remote_probe | grep -q "SSH-2.0"; }
+
+remote_check() {
+    local out
+    out=$(remote_probe)
+    if printf '%s' "$out" | grep -q "SSH-2.0"; then
+        say "公网可达    $JUMP_HOST:$JUMP_PORT → 本机 sshd ✓"
+    elif [ -n "$out" ]; then
+        say "公网可达    $JUMP_HOST:$JUMP_PORT 有响应但不是 SSH ✗"
+    else
+        say "公网可达    $JUMP_HOST:$JUMP_PORT 连不上 ✗（本地进程活着也没用）"
+    fi
 }
 
 # 前台跑一条 ssh（不带 while 循环）—— 交给 launchd 的 KeepAlive 重启。
@@ -197,5 +289,6 @@ case "${1:-status}" in
     on)     cmd_on ;;
     off)    cmd_off ;;
     status) cmd_status ;;
+    heal)   cmd_heal ;;
     *)      say "用法: $0 {on|off|status}"; exit 1 ;;
 esac

@@ -186,6 +186,13 @@
     受限网络里的应急通道是 `scripts/residential-relay.sh`：SSH 只做 TCP 中继，
     **出口 IP 不变**（仍是住宅），代价是跳板机带宽。
 
+36. **★★ 验收必须去「对端」看，本地状态一句都不算。★★**
+    2026-11-21 公网 SSH 挂了半小时没人发现：`launchctl` 说 running、本机 sshd
+    在听，但跳板机上根本没有 22001 —— `remote port forwarding failed` 刷了 424 次。
+    **`state = running` 是进程状态，不是服务状态。**
+    反向隧道要在跳板机抓 `SSH-2.0-` banner；中转要在对端连一次；
+    端口监听也要用真实连接验（`nc -z` 对 TUN 目标是假信号，见原则 29）。
+
 ## 常用命令
 
 ```bash
